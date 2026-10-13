@@ -14,6 +14,13 @@ export interface ConfigTransferResult {
   backupId?: string;
 }
 
+export interface OssSqlBackupResult {
+  ossPath: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+}
+
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
@@ -154,6 +161,16 @@ export const settingsApi = {
 
   async importConfigFromFile(filePath: string): Promise<ConfigTransferResult> {
     return await invoke("import_config_from_file", { filePath });
+  },
+
+  async uploadSqlBackupToOss(filePath?: string): Promise<OssSqlBackupResult> {
+    return await invoke("upload_sql_backup_to_oss", {
+      filePath: filePath ?? null,
+    });
+  },
+
+  async getSyncDefaultProfile(): Promise<string> {
+    return await invoke("get_sync_default_profile");
   },
 
   // ─── WebDAV sync ──────────────────────────────────────────

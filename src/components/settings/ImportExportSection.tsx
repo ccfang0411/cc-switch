@@ -10,8 +10,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { ImportStatus } from "@/hooks/useImportExport";
+import type { S3SyncSettings } from "@/types";
+import { OssSqlBackupSection } from "./OssSqlBackupSection";
 
 interface ImportExportSectionProps {
+  s3Config?: S3SyncSettings;
   status: ImportStatus;
   selectedFile: string;
   errorMessage: string | null;
@@ -24,6 +27,7 @@ interface ImportExportSectionProps {
 }
 
 export function ImportExportSection({
+  s3Config,
   status,
   selectedFile,
   errorMessage,
@@ -115,6 +119,11 @@ export function ImportExportSection({
           status={status}
           errorMessage={errorMessage}
           backupId={backupId}
+        />
+        <OssSqlBackupSection
+          config={s3Config}
+          selectedFile={selectedFile}
+          disabled={isImporting}
         />
       </div>
     </section>

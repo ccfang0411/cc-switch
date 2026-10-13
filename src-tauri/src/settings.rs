@@ -113,7 +113,38 @@ fn default_remote_root() -> String {
     "cc-switch-sync".to_string()
 }
 fn default_profile() -> String {
+    default_sync_profile()
+}
+
+// Old saved configurations without a profile used this remote namespace.
+fn legacy_default_profile() -> String {
     "default".to_string()
+}
+
+pub fn default_sync_profile() -> String {
+    let device = crate::services::sync_protocol::detect_system_device_name()
+        .unwrap_or_else(|| "device".to_string());
+    sync_profile_for_device_name(&device)
+}
+
+fn sync_profile_for_device_name(device: &str) -> String {
+    let profile: String = device
+        .chars()
+        .take(64)
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let profile = profile.trim_matches(['-', '.']);
+    if profile.is_empty() {
+        "device".into()
+    } else {
+        profile.into()
+    }
 }
 
 /// WebDAV 同步设置
@@ -132,7 +163,7 @@ pub struct WebDavSyncSettings {
     pub password: String,
     #[serde(default = "default_remote_root")]
     pub remote_root: String,
-    #[serde(default = "default_profile")]
+    #[serde(default = "legacy_default_profile")]
     pub profile: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
@@ -211,7 +242,7 @@ pub struct S3SyncSettings {
     pub endpoint: String,
     #[serde(default = "default_remote_root")]
     pub remote_root: String,
-    #[serde(default = "default_profile")]
+    #[serde(default = "legacy_default_profile")]
     pub profile: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
@@ -1340,6 +1371,26 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn sync_profile_defaults_use_device_names_and_keep_existing_namespaces() {
+        assert_eq!(
+            sync_profile_for_device_name("我的 Mac/Office?#"),
+            "我的-Mac-Office"
+        );
+        assert_eq!(sync_profile_for_device_name("../"), "device");
+        assert_eq!(S3SyncSettings::default().profile, default_sync_profile());
+        assert_eq!(
+            WebDavSyncSettings::default().profile,
+            default_sync_profile()
+        );
+        // Older configs omitted profile when it meant "default". Preserve
+        // that directory and all explicitly named profiles on load.
+        let legacy: S3SyncSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.profile, "default");
+        let custom: WebDavSyncSettings = serde_json::from_str(r#"{"profile":"work"}"#).unwrap();
+        assert_eq!(custom.profile, "work");
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

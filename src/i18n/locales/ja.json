@@ -666,7 +666,7 @@
         "custom": "カスタム"
       },
       "remoteRootDefault": "デフォルト: cc-switch-sync",
-      "profileDefault": "デフォルト: default",
+      "profileDefault": "既定値：{{name}}（デバイス名）",
       "saveAndTestSuccess": "設定を保存しました。接続正常です",
       "saveAndTestFailed": "設定を保存しましたが、接続テストに失敗しました：{{error}}",
       "noRemoteData": "クラウドに同期データが見つかりません",
@@ -741,7 +741,7 @@
       "remoteRoot": "リモートルートディレクトリ",
       "remoteRootDefault": "デフォルト: cc-switch-sync",
       "profile": "同期プロファイル名",
-      "profileDefault": "デフォルト: default",
+      "profileDefault": "既定値：{{name}}（デバイス名）",
       "autoSync": "自動同期",
       "autoSyncHint": "有効にすると、データベース変更のたびに S3 へ自動アップロードします。",
       "enabled": "S3 同期を有効化",
@@ -1034,6 +1034,17 @@
     },
     "data": {
       "location": "保存場所"
+    },
+    "ossSqlBackup": {
+      "title": "OSS SQL バックアップ",
+      "hint": "下の「クラウド同期」に保存した S3／OSS 設定を使用します。バックアップはプロバイダー設定と API キーを含む非公開オブジェクトとして個別に保存されます。",
+      "configureHint": "下の「クラウド同期」で Alibaba Cloud OSS を選択し、設定を保存してください。",
+      "exportUpload": "データベースをエクスポートしてアップロード",
+      "uploadSelected": "選択した SQL ファイルをアップロード",
+      "uploading": "アップロード中…",
+      "verifying": "アップロードと保存内容の検証中です。",
+      "success": "バックアップをアップロードし検証しました（{{size}} KiB）。",
+      "failed": "OSS バックアップに失敗しました：{{message}}"
     }
   },
   "apps": {

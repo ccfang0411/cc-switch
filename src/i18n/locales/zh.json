@@ -666,7 +666,7 @@
         "custom": "自定义"
       },
       "remoteRootDefault": "默认: cc-switch-sync",
-      "profileDefault": "默认: default",
+      "profileDefault": "默认：{{name}}（设备名称）",
       "saveAndTestSuccess": "配置已保存，连接正常",
       "saveAndTestFailed": "配置已保存，但连接测试失败：{{error}}",
       "noRemoteData": "云端没有找到同步数据",
@@ -741,7 +741,7 @@
       "remoteRoot": "远程根目录",
       "remoteRootDefault": "默认: cc-switch-sync",
       "profile": "同步配置名",
-      "profileDefault": "默认: default",
+      "profileDefault": "默认：{{name}}（设备名称）",
       "autoSync": "自动同步",
       "autoSyncHint": "开启后每次数据库变更都会自动上传到 S3。",
       "enabled": "启用 S3 同步",
@@ -1034,6 +1034,17 @@
     },
     "data": {
       "location": "存储位置"
+    },
+    "ossSqlBackup": {
+      "title": "OSS SQL 备份",
+      "hint": "复用下方“云同步”中已保存的 S3／OSS 配置。备份独立保存为私有对象，包含数据库内的供应商配置与密钥。",
+      "configureHint": "请先在下方“云同步”中选择阿里云 OSS 并保存配置。",
+      "exportUpload": "导出当前数据库并上传",
+      "uploadSelected": "上传已选 SQL 文件",
+      "uploading": "上传中…",
+      "verifying": "正在上传并回读校验，请稍候。",
+      "success": "备份上传成功，内容校验通过（{{size}} KiB）。",
+      "failed": "OSS 备份失败：{{message}}"
     }
   },
   "apps": {

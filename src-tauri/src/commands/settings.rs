@@ -45,6 +45,12 @@ fn merge_settings_for_save(
     incoming
 }
 
+/// 获取新同步配置默认使用的设备名称
+#[tauri::command]
+pub fn get_sync_default_profile() -> String {
+    crate::settings::default_sync_profile()
+}
+
 /// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {

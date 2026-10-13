@@ -1551,6 +1551,8 @@ pub fn run() {
             commands::update_providers_sort_order,
             // theirs: config import/export and dialogs
             commands::export_config_to_file,
+            commands::upload_sql_backup_to_oss,
+            commands::get_sync_default_profile,
             commands::import_config_from_file,
             commands::webdav_test_connection,
             commands::webdav_sync_upload,

@@ -389,6 +389,27 @@ pub(crate) async fn put_object(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
+    put_object_inner(creds, key, bytes, content_type, false).await
+}
+
+/// SQL backups contain credentials. Set an explicit object ACL instead of
+/// inheriting a potentially public bucket ACL.
+pub(crate) async fn put_private_object(
+    creds: &S3Credentials,
+    key: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+) -> Result<(), AppError> {
+    put_object_inner(creds, key, bytes, content_type, true).await
+}
+
+async fn put_object_inner(
+    creds: &S3Credentials,
+    key: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+    private: bool,
+) -> Result<(), AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
@@ -402,6 +423,12 @@ pub(crate) async fn put_object(
     let body_hash = sha256_hex(&bytes);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
+    if private {
+        headers.insert(
+            "x-amz-acl",
+            reqwest::header::HeaderValue::from_static("private"),
+        );
+    }
     sign_request(
         "PUT",
         &url,

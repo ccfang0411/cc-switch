@@ -455,6 +455,7 @@ export function SettingsPage({
             >
               <div className="rounded-panel border border-border bg-surface p-5">
                 <ImportExportSection
+                  s3Config={settings.s3Sync}
                   status={importStatus}
                   selectedFile={selectedFile}
                   errorMessage={errorMessage}

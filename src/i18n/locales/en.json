@@ -666,7 +666,7 @@
         "custom": "Custom"
       },
       "remoteRootDefault": "Default: cc-switch-sync",
-      "profileDefault": "Default: default",
+      "profileDefault": "Default: {{name}} (device name)",
       "saveAndTestSuccess": "Config saved, connection OK",
       "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
       "noRemoteData": "No sync data found on the remote server",
@@ -741,7 +741,7 @@
       "remoteRoot": "Remote Root Directory",
       "remoteRootDefault": "Default: cc-switch-sync",
       "profile": "Sync Profile Name",
-      "profileDefault": "Default: default",
+      "profileDefault": "Default: {{name}} (device name)",
       "autoSync": "Auto Sync",
       "autoSyncHint": "When enabled, each database change triggers an automatic S3 upload.",
       "enabled": "Enable S3 Sync",
@@ -1034,6 +1034,17 @@
     },
     "data": {
       "location": "Location"
+    },
+    "ossSqlBackup": {
+      "title": "OSS SQL backup",
+      "hint": "Uses the saved S3/OSS configuration in Cloud Sync below. Each backup is a private object containing database provider settings and API keys.",
+      "configureHint": "Select Alibaba Cloud OSS in Cloud Sync below and save the configuration first.",
+      "exportUpload": "Export database and upload",
+      "uploadSelected": "Upload selected SQL file",
+      "uploading": "Uploading…",
+      "verifying": "Uploading and verifying the stored content. Please wait.",
+      "success": "Backup uploaded and verified ({{size}} KiB).",
+      "failed": "OSS backup failed: {{message}}"
     }
   },
   "apps": {

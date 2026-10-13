@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -167,7 +167,7 @@ function buildPasswordPreservationKey(values: {
     baseUrl: values.baseUrl ?? "",
     username: values.username ?? "",
     remoteRoot: values.remoteRoot ?? "cc-switch-sync",
-    profile: values.profile ?? "default",
+    profile: values.profile ?? "",
   });
 }
 
@@ -239,6 +239,13 @@ export function WebdavSyncSection({
 }: WebdavSyncSectionProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { data: defaultProfile = "" } = useQuery({
+    queryKey: ["sync-default-profile"],
+    queryFn: () => settingsApi.getSyncDefaultProfile(),
+    staleTime: Infinity,
+  });
+  const configuredProfile = config?.profile ?? defaultProfile;
+  const configuredS3Profile = s3Config?.profile ?? defaultProfile;
   const [actionState, setActionState] = useState<ActionState>("idle");
   const [dirty, setDirty] = useState(false);
   const [passwordTouched, setPasswordTouched] = useState(false);
@@ -268,7 +275,7 @@ export function WebdavSyncSection({
     username: config?.username ?? "",
     password: config?.password ?? "",
     remoteRoot: config?.remoteRoot ?? "cc-switch-sync",
-    profile: config?.profile ?? "default",
+    profile: config?.profile ?? defaultProfile,
     autoSync: config?.autoSync ?? false,
   }));
 
@@ -286,7 +293,9 @@ export function WebdavSyncSection({
   const [s3RemoteRoot, setS3RemoteRoot] = useState(
     s3Config?.remoteRoot ?? "cc-switch-sync",
   );
-  const [s3Profile, setS3Profile] = useState(s3Config?.profile ?? "default");
+  const [s3Profile, setS3Profile] = useState(
+    s3Config?.profile ?? defaultProfile,
+  );
   const [s3AutoSync, setS3AutoSync] = useState(s3Config?.autoSync ?? false);
   const [s3Enabled, setS3Enabled] = useState(s3Config?.enabled ?? false);
   const [s3SecretTouched, setS3SecretTouched] = useState(false);
@@ -341,7 +350,7 @@ export function WebdavSyncSection({
       const nextBaseUrl = config.baseUrl ?? "";
       const nextUsername = config.username ?? "";
       const nextRemoteRoot = config.remoteRoot ?? "cc-switch-sync";
-      const nextProfile = config.profile ?? "default";
+      const nextProfile = configuredProfile;
       const nextKey = buildPasswordPreservationKey({
         baseUrl: nextBaseUrl,
         username: nextUsername,
@@ -370,7 +379,7 @@ export function WebdavSyncSection({
     });
     setPasswordTouched(false);
     setPresetId(detectPreset(config.baseUrl ?? ""));
-  }, [config, dirty]);
+  }, [config, dirty, configuredProfile]);
 
   // Sync S3 form when s3Config is loaded/updated from backend
   useEffect(() => {
@@ -381,11 +390,23 @@ export function WebdavSyncSection({
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
     setS3RemoteRoot(s3Config.remoteRoot ?? "cc-switch-sync");
-    setS3Profile(s3Config.profile ?? "default");
+    setS3Profile(configuredS3Profile);
     setS3AutoSync(s3Config.autoSync ?? false);
     setS3Enabled(s3Config.enabled ?? false);
     setS3SecretTouched(false);
-  }, [s3Config, s3Dirty]);
+  }, [s3Config, s3Dirty, configuredS3Profile]);
+
+  useEffect(() => {
+    if (!defaultProfile) return;
+    if (!config) {
+      setForm((current) =>
+        current.profile ? current : { ...current, profile: defaultProfile },
+      );
+    }
+    if (!s3Config) {
+      setS3Profile((current) => current || defaultProfile);
+    }
+  }, [config, s3Config, defaultProfile]);
 
   const updateField = useCallback((field: keyof typeof form, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -462,10 +483,10 @@ export function WebdavSyncSection({
       // 未重新触碰密码时，提交空值让后端沿用已保存密码，表单里的值仅用于 UI 显示
       password: passwordTouched ? form.password : "",
       remoteRoot: form.remoteRoot.trim() || "cc-switch-sync",
-      profile: form.profile.trim() || "default",
+      profile: form.profile.trim() || defaultProfile,
       autoSync: form.autoSync,
     };
-  }, [form, passwordTouched]);
+  }, [form, passwordTouched, defaultProfile]);
 
   // ─── Handlers ───────────────────────────────────────────
 
@@ -678,7 +699,7 @@ export function WebdavSyncSection({
       secretAccessKey: s3SecretAccessKey,
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
-      profile: s3Profile.trim() || "default",
+      profile: s3Profile.trim() || defaultProfile,
     };
   }, [
     s3Enabled,
@@ -690,6 +711,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    defaultProfile,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
@@ -941,8 +963,8 @@ export function WebdavSyncSection({
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
-  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
-  const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || "default"}`;
+  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || defaultProfile}`;
+  const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || defaultProfile}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
     remoteInfo?.dbCompatVersion,
   );
@@ -1094,13 +1116,16 @@ export function WebdavSyncSection({
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.webdavSync.profile")}
                 <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.webdavSync.profileDefault")}
+                  {t("settings.webdavSync.profileDefault", {
+                    name: defaultProfile,
+                  })}
                 </span>
               </label>
               <Input
+                aria-label={t("settings.webdavSync.profile")}
                 value={form.profile}
                 onChange={(e) => updateField("profile", e.target.value)}
-                placeholder="default"
+                placeholder={defaultProfile}
                 className="text-xs flex-1"
                 disabled={isLoading}
               />
@@ -1377,16 +1402,19 @@ export function WebdavSyncSection({
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.s3Sync.profile")}
                 <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.profileDefault")}
+                  {t("settings.s3Sync.profileDefault", {
+                    name: defaultProfile,
+                  })}
                 </span>
               </label>
               <Input
+                aria-label={t("settings.s3Sync.profile")}
                 value={s3Profile}
                 onChange={(e) => {
                   setS3Profile(e.target.value);
                   markS3Dirty();
                 }}
-                placeholder="default"
+                placeholder={defaultProfile}
                 className="text-xs flex-1"
                 disabled={isS3Loading}
               />
