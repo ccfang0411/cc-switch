@@ -125,3 +125,31 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 });
+
+it("includes Kimi Code bindings in account removal impact", () => {
+  const users = findManagedAccountUsers("codex_oauth", ["kimi-account"], null, {
+    kimicode: byId(
+      provider("kimi-chatgpt", {
+        meta: {
+          providerType: "codex_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "kimi-account",
+          },
+        },
+      }),
+    ),
+  });
+  expect(users).toEqual([
+    {
+      appId: "kimicode",
+      providerId: "kimi-chatgpt",
+      name: "kimi-chatgpt",
+      viaDefault: false,
+    },
+  ]);
+  expect(groupUsersByApp(users)).toEqual([
+    { appId: "kimicode", names: ["kimi-chatgpt"] },
+  ]);
+});

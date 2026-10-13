@@ -314,6 +314,7 @@ export interface VisibleApps {
   hermes: boolean;
   pi: boolean;
   mcode: boolean;
+  kimicode: boolean;
 }
 
 // WebDAV 同步状态
@@ -452,6 +453,8 @@ export interface Settings {
   hermesConfigDir?: string;
   // 覆盖 Pi agent 配置目录（可选）
   piConfigDir?: string;
+  // 覆盖 Kimi Code 配置目录（可选）
+  kimicodeConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -462,6 +465,8 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+  // 当前 Kimi Code 直连供应商 ID（路由 / 聚合模式下回到直连时写回的那家）
+  currentProviderKimicode?: string;
 
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -737,6 +742,7 @@ export interface McpServerSpec {
 // v3.7.0: MCP 服务器应用启用状态
 export interface McpApps {
   mcode?: boolean;
+  kimicode?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

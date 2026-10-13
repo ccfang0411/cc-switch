@@ -151,6 +151,141 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
 }
 
 #[test]
+fn kimicode_import_ignores_native_metadata_and_continues_after_conflicts() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".kimi-code/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for id in ["a-conflict", "b-shared"] {
+        let server: McpServer = serde_json::from_value(json!({
+            "id":id, "name":id, "server":{"type":"http","url":"https://example.com/mcp"},
+            "apps":{"claude":true}
+        }))
+        .unwrap();
+        state.db.save_mcp_server(&server).unwrap();
+    }
+    let original = json!({"mcpServers":{
+        "a-conflict":{"command":"different"},
+        "b-shared":{"type":"streamable-http","url":"https://example.com/mcp","timeout":5000,"description":"native","tools":[{"name":"tool"}]},
+        "c-new":{"command":"node"}
+    }});
+    fs::write(&path, original.to_string()).unwrap();
+    let error = McpService::import_from_all_apps(&state)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("a-conflict"));
+    assert!(!error.contains("b-shared"));
+    let servers = state.db.get_all_mcp_servers().unwrap();
+    assert!(!servers["a-conflict"].apps.kimicode);
+    assert!(servers["b-shared"].apps.kimicode && servers["b-shared"].apps.claude);
+    assert!(servers["c-new"].apps.kimicode);
+    McpService::sync_enabled_for_app(&state, &AppType::KimiCode).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    for field in ["timeout", "description", "tools"] {
+        assert_eq!(
+            written["mcpServers"]["b-shared"][field],
+            original["mcpServers"]["b-shared"][field]
+        );
+    }
+    assert_eq!(
+        written["mcpServers"]["a-conflict"],
+        original["mcpServers"]["a-conflict"]
+    );
+}
+
+#[test]
+fn kimicode_write_failures_keep_managed_mcp_state_for_all_write_entries() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".kimi-code/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let server: McpServer = serde_json::from_value(json!({
+        "id":"managed", "name":"Managed", "server":{"command":"node"}, "apps":{"kimicode":true}
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&server).unwrap();
+    fs::write(&path, "invalid json").unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::KimiCode, false).is_err());
+    let mut disabled = server.clone();
+    disabled.apps.kimicode = false;
+    assert!(McpService::upsert_server(&state, disabled.clone()).is_err());
+    let mut edited = server.clone();
+    edited.server = json!({"command":"replacement"});
+    assert!(McpService::upsert_server(&state, edited).is_err());
+    assert!(McpService::delete_server(&state, &server.id).is_err());
+    let current = &state.db.get_all_mcp_servers().unwrap()[&server.id];
+    assert!(current.apps.kimicode);
+    assert_eq!(current.server, server.server);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "invalid json");
+    state.db.save_mcp_server(&disabled).unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::KimiCode, true).is_err());
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .kimicode
+    );
+    fs::write(&path, "{}").unwrap();
+    McpService::toggle_app(&state, &server.id, AppType::KimiCode, true).unwrap();
+    assert!(
+        state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .kimicode
+    );
+    McpService::toggle_app(&state, &server.id, AppType::KimiCode, false).unwrap();
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .kimicode
+    );
+}
+
+#[test]
+fn kimicode_automatic_sync_preserves_unmanaged_same_name_servers() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let state = create_test_state().unwrap();
+    let path = ensure_test_home().join(".kimi-code/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let native = json!({"mcpServers":{"context7":{"command":"native-server","enabled":true}}});
+    fs::write(&path, native.to_string()).unwrap();
+    let server = McpServer {
+        id: "context7".into(),
+        name: "Context7".into(),
+        server: json!({"command":"managed-server"}),
+        apps: McpApps {
+            claude: true,
+            ..Default::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    };
+    state.db.save_mcp_server(&server).unwrap();
+    let error = McpService::import_from_all_apps(&state).unwrap_err();
+    assert!(error.to_string().contains("context7"));
+    assert!(
+        !state.db.get_all_mcp_servers().unwrap()["context7"]
+            .apps
+            .kimicode
+    );
+    McpService::sync_enabled_for_app(&state, &AppType::KimiCode).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
+        native
+    );
+    McpService::toggle_app(&state, "context7", AppType::KimiCode, true).unwrap();
+    McpService::import_from_all_apps(&state).unwrap();
+    McpService::toggle_app(&state, "context7", AppType::KimiCode, false).unwrap();
+    let disabled: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(disabled["mcpServers"].get("context7").is_none());
+}
+
+#[test]
 fn pi_toggle_writes_its_mcp_json_and_keeps_pi_fields() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
@@ -718,6 +853,7 @@ command = "echo"
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -865,6 +1001,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -933,6 +1070,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -981,6 +1119,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1018,6 +1157,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1201,6 +1341,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1259,6 +1400,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1317,6 +1459,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1376,6 +1519,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1458,6 +1602,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1600,6 +1745,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1625,6 +1771,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 opencode: false,
                 hermes: false,
                 mcode: false,
+                kimicode: false,
                 pi: false,
             },
             description: None,
@@ -1670,7 +1817,8 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "opencode",
             "hermes",
             "pi",
-            "mcode"
+            "mcode",
+            "kimicode"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);

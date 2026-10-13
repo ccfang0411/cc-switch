@@ -11,11 +11,19 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// 获取到的模型信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_reasoning_efforts: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// 模型列表响应的兼容格式。
@@ -128,12 +136,17 @@ pub async fn fetch_models(
                     .map(|m| FetchedModel {
                         id: m.id,
                         owned_by: m.owned_by,
+                        ..Default::default()
                     })
                     .collect()
             } else {
                 catalog_model_ids(resp.models)
                     .into_iter()
-                    .map(|id| FetchedModel { id, owned_by: None })
+                    .map(|id| FetchedModel {
+                        id,
+                        owned_by: None,
+                        ..Default::default()
+                    })
                     .collect()
             };
 

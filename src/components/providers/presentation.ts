@@ -111,6 +111,11 @@ export interface SwitchModeInput {
   /** 需要路由的原因（悬停「需要路由」时的说明） */
   routingReason: (provider: Provider) => string;
   serviceRunning: boolean;
+  /**
+   * 共存式应用（Kimi Code 直连时供应商都留在配置里）：直连页「更多」菜单给「从配置移除」，
+   * 供应商留在 CC Switch 里。切换式应用不传。
+   */
+  removeFromConfig?: (provider: Provider) => void;
   actions: {
     switchDirect: (provider: Provider) => void;
     needsRouteDialog: (provider: Provider) => void;
@@ -210,6 +215,17 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
   });
 
   if (view === "direct") {
+    // 共存式应用直连页的「从配置移除」（当前那家也有，和共存列表的语义一致）
+    const removeItem = (p: Provider): CardMenuItem[] =>
+      input.removeFromConfig
+        ? [
+            {
+              key: "removeFromConfig",
+              label: t("providerCard.action.remove"),
+              onSelect: () => input.removeFromConfig!(p),
+            },
+          ]
+        : [];
     return [
       {
         key: "all",
@@ -227,6 +243,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                   },
                   chips,
                   buttons: [],
+                  menuItems: removeItem(p),
                 },
               };
             }
@@ -244,6 +261,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                         : actions.switchDirect(p),
                   },
                 ],
+                menuItems: removeItem(p),
               },
             };
           }
@@ -265,6 +283,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                     : undefined,
                 },
               ],
+              menuItems: removeItem(p),
             },
           };
         }),

@@ -47,6 +47,7 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isAdditiveAppId } from "@/config/appConfig";
 import {
   buildAdditiveSections,
   buildDesktopSections,
@@ -151,6 +152,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "mcode":
+        case "kimicode":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -299,6 +301,11 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         queue: switchMode.queue.filter((id) => known.has(id)),
+        // 共存式应用（Kimi Code）直连页保留「从配置移除」
+        removeFromConfig:
+          isAdditiveAppId(appId) && onRemoveFromConfig
+            ? onRemoveFromConfig
+            : undefined,
       });
     }
     if (appId === "claude-desktop") {
@@ -408,7 +415,7 @@ export function ProviderList({
           appId={appId}
           onCreate={appId === "pi" ? undefined : onCreate}
           onImport={
-            appId === "pi" || appId === "mcode"
+            appId === "pi" || appId === "mcode" || appId === "kimicode"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -434,7 +441,11 @@ export function ProviderList({
       appId={appId}
       presentation={presentation}
       isCurrent={isCurrentFor(provider)}
-      isInConfig={isInConfig(provider)}
+      isInConfig={
+        appId === "kimicode" && switchMode && switchMode.active !== "direct"
+          ? isCurrentFor(provider)
+          : isInConfig(provider)
+      }
       onEdit={onEdit}
       onDelete={onDelete}
       onDuplicate={onDuplicate}

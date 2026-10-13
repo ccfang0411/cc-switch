@@ -46,6 +46,7 @@ pub fn reset_test_fs() {
         ".gemini",
         ".grok",
         ".config",
+        ".kimi-code",
         ".openclaw",
         "profiles",
     ] {

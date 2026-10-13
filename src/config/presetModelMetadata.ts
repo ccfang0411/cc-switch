@@ -11,6 +11,7 @@ import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenCodeModel } from "@/types";
 import { codexProviderPresets } from "./codexProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
+import { kimicodeProviderPresets } from "./kimicodeProviderPresets";
 import { mcodeProviderPresets } from "./mcodeProviderPresets";
 import { openclawProviderPresets } from "./openclawProviderPresets";
 import { opencodeProviderPresets } from "./opencodeProviderPresets";
@@ -124,6 +125,28 @@ export const mcodePresetModelSources = lazy(() =>
       [preset.settingsConfig.options.baseURL],
       Object.entries(preset.settingsConfig.models ?? {}),
       openCodeModelMetadata,
+    ),
+  ),
+);
+
+export const kimicodePresetModelSources = lazy(() =>
+  kimicodeProviderPresets.flatMap((preset) =>
+    buildSources(
+      [preset.settingsConfig.base_url],
+      [
+        [
+          preset.settingsConfig.model.model,
+          preset.settingsConfig.model,
+        ] as const,
+      ],
+      (model) => ({
+        contextWindow: positiveInteger(model.max_context_size),
+        reasoning: model.capabilities?.includes("thinking"),
+        inputModalities: model.capabilities?.includes("image_in")
+          ? ["text", "image"]
+          : undefined,
+        reasoningEfforts: stringList(model.support_efforts),
+      }),
     ),
   ),
 );

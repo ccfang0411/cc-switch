@@ -206,6 +206,7 @@ export const handlers = [
           "opencode",
           "hermes",
           "mcode",
+          "kimicode",
         ];
     return success(targets.map((app) => ({ app, ok: true })));
   }),
@@ -405,6 +406,7 @@ export const handlers = [
       codex: false,
       gemini: false,
       grokbuild: false,
+      kimicode: false,
     }),
   ),
 

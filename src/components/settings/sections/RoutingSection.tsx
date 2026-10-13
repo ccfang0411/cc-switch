@@ -128,6 +128,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     codex: useProvidersQuery("codex").data,
     gemini: useProvidersQuery("gemini").data,
     grokbuild: useProvidersQuery("grokbuild").data,
+    kimicode: useProvidersQuery("kimicode").data,
   };
   const { data: desktop } = useProvidersQuery("claude-desktop");
   const desktopCurrent = desktop?.providers[desktop.currentProviderId];

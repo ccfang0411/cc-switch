@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi & MiniMax Code
+### The All-in-One Manager for Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes Agent, Pi, MiniMax Code & Kimi Code
 
 **Switch API providers in one click and manage MCP, Skills, and Prompts in one place — no more hand-editing JSON / TOML / YAML config files.**
 
@@ -21,6 +21,8 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 **[Download](#download--installation) · [Quick Start](#quick-start) · [Features](#features) · [FAQ](#faq) · [User Manual](docs/user-manual/en/README.md)**
 
 </div>
+
+> **Kimi Code branch**: Application update checks, prompts, and installation are disabled. Kimi providers offer plan, region, and multiple-model selection. Codex account providers in Kimi Code fetch available models, context windows, and reasoning levels from the official account endpoint; users select models and a default. Kimi sessions support browsing, search, and resume; delete sessions in the native Kimi interface.
 
 ## ❤️Sponsor
 
@@ -225,7 +227,7 @@ AI coding tools like Claude Code, Codex, and Gemini CLI each have their own conf
 
 **CC Switch** brings all of this into a single desktop app: pick a preset, enter your key, and switch in one click. Switching replaces only the connection details — endpoint, key, and model — so plugins, hooks, MCP, and comments you added yourself stay as they are.
 
-- **One App, Ten Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, and MiniMax Code
+- **One App, Eleven Tools** — Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, and Kimi Code
 - **No More Manual Editing** — 90+ provider presets including AWS Bedrock, NVIDIA NIM, and community relays
 - **Direct, Routing, or Aggregation — Your Choice** — Direct connects the tool straight to the provider; Routing forwards requests through your machine, converting API formats and failing over automatically, so you can use GPT in Claude Code and Claude in Codex; Aggregation puts models from several providers into one model list in Claude Code or Codex, and each request goes to the provider of the model you pick
 - **Centralized MCP, Skills & Prompts** — Add MCP servers and Skills once, then choose which tools to sync them to; prompts are maintained separately for each tool
@@ -306,11 +308,11 @@ Download the latest Linux build from the [Releases](../../releases) page:
 
 1. **Add Provider**: Select the tool you want to manage in the sidebar, then click "+" (Add Provider) in the top-right corner of the page → Choose a preset or create a custom configuration
 2. **Switch Provider**:
-   - Main UI: Select provider → Click "Enable" (for OpenCode, OpenClaw, Hermes, and MiniMax Code the button is "Add", and for Pi it's "Enable" / "Remove"; these five are coexist-mode tools, so you can add several providers at once)
+   - Main UI: Select provider → Click "Enable" (for OpenCode, OpenClaw, Hermes, MiniMax Code, and Kimi Code the button is "Add", and for Pi it's "Enable" / "Remove"; these six are coexist-mode tools, so you can add several providers at once)
    - System Tray: One row per tool showing "name · mode · provider · quota"; click a provider name in its submenu to switch (Claude Code, Claude Desktop, Codex, Gemini CLI, and Grok Build)
 3. **Takes Effect**: Claude Code needs no restart; for Codex, Gemini CLI, and Grok Build, restart your terminal or the CLI tool; for Claude Desktop, restart the app itself (see FAQ)
 4. **Back to Official Login**: Switch to the built-in official provider in the list (e.g. "Claude Official"), restart the tool, then follow its login/OAuth flow
-5. **Routing & Aggregation (optional)**: The Claude Code, Codex, Gemini CLI, and Grok Build pages have "Direct" / "Routing" tabs at the top, and Claude Code and Codex also have "Aggregation". Clicking a tab only changes what you're looking at and doesn't touch your configuration; to actually switch, click "Start routing" or "Switch to Aggregation" on the page, and click "Back to direct" to return. Use Routing to use OpenAI- or Gemini-format providers in Claude Code, or Claude in Codex; use Aggregation to mix models from several providers in one model list
+5. **Routing & Aggregation (optional)**: The Claude Code, Codex, Gemini CLI, Grok Build, and Kimi Code pages have "Direct" / "Routing" tabs at the top, and Claude Code, Codex, and Kimi Code also have "Aggregation". Clicking a tab only changes what you're looking at and doesn't touch your configuration; to actually switch, click "Start routing" or "Switch to Aggregation" on the page, and click "Back to direct" to return. Use Routing to use OpenAI- or Gemini-format providers in Claude Code, or Claude in Codex; use Aggregation to mix models from several providers in one model list
 6. **Manage Tools**: The "Apps" page in the sidebar shows each AI coding tool's version, install location, and source in one place; you can install, upgrade, or upgrade all, and choose which tools appear in the sidebar
 
 ### MCP, Prompts, Skills, Projects & Sessions
@@ -344,6 +346,11 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | Hermes | Coexist | – | – | – | ✓ | ✓ | Memory | ✓ | – |
 | Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md, SYSTEM.md, prompt templates | ✓ | ✓ |
 | MiniMax Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | Coexist | ✓ | ✓ | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+
+Kimi Code keeps providers side by side in Direct mode; Routing and Aggregation use a separate reserved proxy configuration. Directory precedence is CC Switch settings > `KIMI_CODE_HOME` > `~/.kimi-code`. Set `KIMI_CODE_HOME` to the same custom path when launching Kimi CLI.
+
+Kimi Code supports ChatGPT, GitHub Copilot, and xAI accounts through the Account Login category. Use Routing or Aggregation mode; credentials are managed by the local Auth Center and are never written into Kimi direct-provider tables.
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
 - **Local Routing**: CC Switch forwards requests on your machine and converts API formats; see [Local Routing & Failover](#local-routing--failover) below. Claude Desktop providers can use "Direct" or "Model Mapping"; with "Model Mapping", requests go through local routing.
@@ -365,7 +372,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 ### Local Routing & Failover
 
 - **API format conversion** — Local routing converts requests between Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, and Gemini Native: Claude Code and Claude Desktop can use OpenAI- or Gemini-format providers, and Codex and Grok Build can use Chat Completions or Anthropic Messages providers
-- **Per-tool toggle** — Claude Code, Codex, Gemini CLI, and Grok Build can each enter Routing mode separately: click "Start routing" on the "Routing" tab at the top of the page. In Routing mode, switching providers takes effect immediately for subsequent requests (Codex, Gemini CLI, and Grok Build may still need a restart if the switch changes the model). When you quit CC Switch, it writes the direct configuration back first and reconnects the next time it starts
+- **Per-tool toggle** — Claude Code, Codex, Gemini CLI, Grok Build, and Kimi Code can each enter Routing mode separately: click "Start routing" on the "Routing" tab at the top of the page. In Routing mode, switching providers takes effect immediately for subsequent requests (Codex, Gemini CLI, and Grok Build may still need a restart if the switch changes the model). When you quit CC Switch, it writes the direct configuration back first and reconnects the next time it starts
 - **Auto-failover** — Configure a failover queue for each tool; when a request fails, CC Switch automatically moves on to the next provider in the queue, backed by a circuit breaker and provider health monitoring
 - **Rectifier** — Automatically fixes certain requests that some upstreams can't handle (e.g. Thinking signatures, or falling back when images aren't supported)
 - Official providers (e.g. Claude Official) can't go through local routing (except Codex's OpenAI Official)
@@ -382,7 +389,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### MCP, Prompts & Skills
 
-- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code), import existing configs from each tool, and import via Deep Link
+- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code), import existing configs from each tool, and import via Deep Link
 - **Prompts** — A per-tool prompt library with a Markdown editor; enabling a prompt writes it to that tool's prompt file (CLAUDE.md / AGENTS.md / GEMINI.md), and the file's existing content is saved back to the library first, so nothing is lost. Pi can also edit SYSTEM.md, APPEND_SYSTEM.md, and prompt templates
 - **Skills** — Search skills.sh, or install in one click from GitHub repos or ZIP files; check for updates and update all in one click; sync to each tool automatically, via symlinks only, or via copies only; you can optionally store them in `~/.agents/skills`
 - All three panels support search, and MCP and Skills can also be enabled or disabled all at once per tool; providers, MCP servers, and prompts are edited full-page in the content area, and you're warned before leaving with unsaved changes
@@ -413,7 +420,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 <details>
 <summary><strong>Which AI tools does CC Switch support?</strong></summary>
 
-CC Switch supports ten tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
+CC Switch supports eleven tools: **Claude Code**, **Claude Desktop**, **Codex**, **Gemini CLI**, **Grok Build**, **OpenCode**, **OpenClaw**, **Hermes**, **Pi**, **MiniMax Code**, **Kimi Code**. Each tool has dedicated provider presets and configuration management; see [Supported Features by Tool](#supported-features-by-tool) for what each one supports.
 
 </details>
 
@@ -426,7 +433,7 @@ It depends on the tool:
 - **Codex, Gemini CLI, Grok Build**: restart your terminal or the CLI tool for changes to take effect (CC Switch reminds you after switching). In Routing mode, requests go to the new provider immediately, but all three tools may still need a restart if the switch changes the model.
 - **Aggregation mode**: changes to Claude Code's aggregated models take effect immediately; for Codex, entering or leaving Aggregation and changing the aggregated model list all require a full restart — see the next entry.
 - **Claude Desktop**: fully quit and reopen Claude Desktop; when using "Model Mapping", also keep CC Switch running.
-- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code**: these are coexist-mode tools — clicking "Add" ("Enable" for Pi) writes the provider into the tool's own config alongside the others; you then pick the model you want inside the tool.
+- **OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, Kimi Code**: these are coexist-mode tools — clicking "Add" ("Enable" for Pi) writes the provider into the tool's own config alongside the others; you then pick the model you want inside the tool.
 
 </details>
 
@@ -468,7 +475,7 @@ Older versions saved the whole config file back to the provider when you switche
 
 CC Switch follows a "minimal intrusion" design principle — even if you uninstall the app, your tools will continue to work normally.
 
-So for tools that use one active provider at a time (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), the system always keeps one configuration in use, because deleting all configurations would make the corresponding tool unusable; to delete it, switch to another provider first. Likewise, the default provider in Aggregation mode can't be removed; make another provider the default first. Coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, and MiniMax Code) aren't subject to this restriction — you can delete any provider directly. If you rarely use a tool, you can hide it from the sidebar on the "Apps" page. To switch back to official login, see the next question.
+So for tools that use one active provider at a time (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), the system always keeps one configuration in use, because deleting all configurations would make the corresponding tool unusable; to delete it, switch to another provider first. Likewise, the default provider in Aggregation mode can't be removed; make another provider the default first. Coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code, and Kimi Code) aren't subject to this restriction — you can delete any provider directly. If you rarely use a tool, you can hide it from the sidebar on the "Apps" page. To switch back to official login, see the next question.
 
 </details>
 
@@ -532,7 +539,7 @@ After you change "CC Switch Configuration Directory" in "Settings → Data → L
 <details>
 <summary><strong>How do I manage tools inside WSL on Windows?</strong></summary>
 
-CC Switch doesn't detect WSL automatically. In "Settings → App config", change the config directory for the corresponding tool to a path inside WSL, e.g. `\\wsl.localhost\Ubuntu\home\<user>\.claude`; after you save, CC Switch reads and writes the config inside WSL (supported for Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, and Pi). Once this is set, the "Apps" page in the sidebar also detects and upgrades that tool in the corresponding WSL distribution.
+CC Switch doesn't detect WSL automatically. In "Settings → App config", change the config directory for the corresponding tool to a path inside WSL, e.g. `\\wsl.localhost\Ubuntu\home\<user>\.claude`; after you save, CC Switch reads and writes the config inside WSL (supported for Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, OpenClaw, Hermes, Pi, and Kimi Code). Once this is set, the "Apps" page in the sidebar also detects and upgrades that tool in the corresponding WSL distribution.
 
 Note: Routing and Aggregation write `127.0.0.1` as the address into the config. In WSL2's default NAT networking mode, `127.0.0.1` inside WSL can't reach local routing on Windows; switch WSL to mirrored networking mode instead.
 

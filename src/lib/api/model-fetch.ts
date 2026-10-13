@@ -6,6 +6,13 @@ import { parseHeaderOverrideJson } from "@/lib/requestOverrides";
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  /** Metadata reported by the official Codex account catalog, when available. */
+  contextWindow?: number;
+  supportedReasoningEfforts?: string[];
+  defaultReasoningEffort?: string;
+  displayName?: string;
+  inputModalities?: string[];
+  alias?: string;
 }
 
 export interface ModelFetchOptions {

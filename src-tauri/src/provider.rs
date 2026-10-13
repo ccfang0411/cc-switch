@@ -132,6 +132,46 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    /// Enable subscription quota queries for existing and newly added Kimi rows.
+    /// Explicit user configuration, including a disabled query, always wins.
+    pub(crate) fn ensure_kimi_subscription_usage(&mut self) -> bool {
+        if self
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .is_some()
+            || self.is_codex_oauth()
+            || self.is_github_copilot()
+            || self.is_xai_oauth()
+            || self
+                .settings_config
+                .get("base_url")
+                .and_then(Value::as_str)
+                .and_then(crate::services::coding_plan::kimi_usage_url)
+                .is_none()
+        {
+            return false;
+        }
+        self.meta.get_or_insert_with(Default::default).usage_script = Some(UsageScript {
+            enabled: true,
+            language: "javascript".into(),
+            code: String::new(),
+            timeout: Some(15),
+            api_key: None,
+            base_url: None,
+            access_token: None,
+            user_id: None,
+            template_type: Some("token_plan".into()),
+            auto_query_interval: Some(5),
+            coding_plan_provider: Some("kimi".into()),
+            access_key_id: None,
+            secret_access_key: None,
+            team_organization_id: None,
+            team_project_id: None,
+        });
+        true
+    }
+
     pub fn has_usage_script_enabled(&self) -> bool {
         self.meta
             .as_ref()
@@ -216,6 +256,21 @@ impl Provider {
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
+            ),
+            AppType::KimiCode => (
+                str_at(settings.get("base_url")),
+                settings
+                    .get("api_key")
+                    .and_then(Value::as_str)
+                    .filter(|key| !key.trim().is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        settings
+                            .get("api_key_env")
+                            .and_then(Value::as_str)
+                            .and_then(|name| std::env::var(name).ok())
+                    })
+                    .unwrap_or_default(),
             ),
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
@@ -1090,6 +1145,33 @@ pub struct OpenCodeModelLimit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kimi_usage_backfills_old_rows_and_preserves_disabled_queries() {
+        let mut row = super::Provider::with_id(
+            "kimi".into(),
+            "Kimi".into(),
+            serde_json::json!({"base_url":"https://api.kimi.com/coding/v1", "api_key":"test-key"}),
+            None,
+        );
+        assert!(row.ensure_kimi_subscription_usage());
+        let script = row.meta.as_mut().unwrap().usage_script.as_mut().unwrap();
+        assert!(script.enabled);
+        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
+        script.enabled = false;
+        assert!(!row.ensure_kimi_subscription_usage());
+        assert!(
+            !row.meta
+                .as_ref()
+                .unwrap()
+                .usage_script
+                .as_ref()
+                .unwrap()
+                .enabled
+        );
+        row.meta = None;
+        row.settings_config["base_url"] = serde_json::json!("https://api.moonshot.cn/v1");
+        assert!(!row.ensure_kimi_subscription_usage());
+    }
     use super::{
         ClaudeModelConfig, CodexCopilotApiFormat, CodexModelConfig, GeminiModelConfig,
         LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,

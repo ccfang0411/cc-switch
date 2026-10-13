@@ -19,6 +19,7 @@ mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod jsonc_document;
+mod kimi_config;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -521,17 +522,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
-            // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
-            #[cfg(desktop)]
-            {
-                if let Err(e) = app
-                    .handle()
-                    .plugin(tauri_plugin_updater::Builder::new().build())
-                {
-                    // 若配置不完整（如缺少 pubkey），跳过 Updater 而不中断应用
-                    log::warn!("初始化 Updater 插件失败，已跳过：{e}");
-                }
-            }
+            // Application updater is deliberately not registered in this branch.
 
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
@@ -1017,6 +1008,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::KimiCode,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,

@@ -50,6 +50,7 @@ const LIVE_FILE: Partial<Record<AppId, string>> = {
   claude: "~/.claude/settings.json",
   codex: "~/.codex/config.toml",
   gemini: "~/.gemini/.env",
+  kimicode: "~/.kimi-code/config.toml",
 };
 const SWITCH_APPS: AppId[] = [
   "claude",
@@ -57,6 +58,7 @@ const SWITCH_APPS: AppId[] = [
   "gemini",
   "grokbuild",
   "claude-desktop",
+  "kimicode",
 ];
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -192,6 +194,7 @@ export function EditProviderDialog({
       // OpenCode uses additive mode, while Pi's shared models.json is owned by
       // the catalog coordinator. Neither has a per-provider generic live
       // snapshot that may replace the DB aggregate in this form.
+      // Kimi Code 走上面的 editor_view 投影（后端按供应商行投影 config.toml）。
       if (appId === "opencode" || appId === "pi" || appId === "mcode") {
         if (!cancelled) {
           setLiveSettings(null);

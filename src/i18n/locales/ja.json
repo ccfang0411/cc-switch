@@ -372,6 +372,7 @@
     }
   },
   "settings": {
+    "branchUpdatesDisabled": "独立ブランチ · アプリの更新は無効",
     "title": "設定",
     "general": {
       "appearance": "外観",
@@ -904,6 +905,8 @@
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "piConfigDir": "Pi 設定ディレクトリ",
     "piConfigDirDescription": "Pi の設定ディレクトリ（models.json、指示ファイル、プロンプト、Skills、セッション）を上書きします。",
+    "kimicodeConfigDir": "Kimi Code 設定ディレクトリ",
+    "kimicodeConfigDirDescription": "Kimi Code の設定ディレクトリ（config.toml、プロンプト、Skills）を上書きします。Kimi CLI の起動時には KIMI_CODE_HOME を同じパスに設定してください。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -912,6 +915,7 @@
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
+    "browsePlaceholderKimicode": "例: /home/<your-username>/.kimi-code",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -1044,12 +1048,36 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "kimicode": "Kimi Code"
   },
   "mcode": {
     "empty": {
       "title": "カスタムプロバイダーはまだありません",
       "description": "MiniMax アカウントのログインは MiniMax Code 自身が管理するため、インポートは不要です。config.yaml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    }
+  },
+  "kimicode": {
+    "empty": {
+      "title": "カスタムプロバイダーはまだありません",
+      "description": "Kimi アカウントのログインは Kimi Code 自身が管理するため、インポートは不要です。config.toml に既にあるカスタムプロバイダーはここに自動で表示されます。右上の + から、プリセットまたはカスタムプロバイダーを追加できます。"
+    },
+    "form": {
+      "addModel": "モデルを追加",
+      "manualModelId": "モデル ID を手動で追加",
+      "modelDefault": "モデルのデフォルトを使用",
+      "effortForModel": "{{model}} の推論強度",
+      "reasoningEffort": "デフォルトの推論強度",
+      "officialContext": "モデルカタログのコンテキスト長：{{count}}",
+      "removeModel": "{{model}} を削除",
+      "setDefaultModel": "デフォルトに設定",
+      "defaultModel": "デフォルトモデル",
+      "searchModels": "モデルを検索",
+      "chooseModels": "追加するモデルを選択",
+      "codexModelsHint": "選択した ChatGPT アカウントからモデル、コンテキスト長、推論強度を取得します。追加するモデルとデフォルトを選択してください。",
+      "providerTypeHint": "このエンドポイントで Kimi Code が使うプロバイダープロトコル（type）。",
+      "capabilities": "ケイパビリティ",
+      "capabilitiesHint": "モデルのケイパビリティをカンマ区切りで指定します（例: thinking, image_in, tool_use）。"
     }
   },
   "pi": {
@@ -1283,6 +1311,7 @@
     "deleteSessionEllipsis": "セッションを削除",
     "deleteEllipsis": "削除",
     "selectSessionLabel": "{{title}} を選択",
+    "kimicodeDeleteHint": "Kimi Code でこのセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
@@ -2157,6 +2186,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "kimicode": "Kimi Code",
       "label": "アプリで絞り込み"
     },
     "rawInputLabel": "原始",
@@ -2536,6 +2566,7 @@
     "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください"
   },
   "dbUpgrade": {
+    "branchRecovery": "この独立ブランチではアプリの更新が無効です。データベースをバックアップしてから、互換性のあるブランチ版を手動でインストールするか、互換性のあるバックアップを復元してください。",
     "title": "データベースのバージョンが新しすぎます",
     "description": "このデータベースは新しいバージョンの CC Switch で作成されています。続行するにはアプリを更新してください。更新してもデータは削除されません。",
     "versionInfo": "データベース v{{db}} · アプリ対応 v{{supported}}",
@@ -2596,7 +2627,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "kimicode": "Kimi Code"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -3961,6 +3993,7 @@
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
       "monthly": "月",
+      "monthlyCode": "月間コード利用枠",
       "credits": "クレジット",
       "copilotPremium": "プレミアム"
     },
@@ -3975,6 +4008,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "週間",
     "monthly": "月間",
+    "monthlyCode": "月間コード利用枠",
     "credits": "クレジット",
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
@@ -4043,7 +4077,8 @@
       "openclaw": "npm でインストール",
       "hermes": "公式インストールスクリプトでインストール",
       "pi": "npm でインストール",
-      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います"
+      "mcode": "公式インストールスクリプトで入れ、失敗したら npm を使います",
+      "kimicode": "npm でインストール"
     }
   },
   "appPage": {
@@ -4120,6 +4155,7 @@
       "stackNoteEmpty": "ほかのプロバイダーはまだ追加されていないため、切り替え後は既定のプロバイダーだけです。あとで「集約」タブで追加できます。",
       "stackNoteNoFailover": "集約ではフェイルオーバーしません。キューと設定は保持され、ルーティングに戻すと復元されます。",
       "stackNoteRestartCodex": "{{app}} を再起動すると集約したモデルが表示されます。デスクトップ版は完全に終了してから開き直してください。",
+      "stackNoteRestartApp": "{{app}} を再起動すると集約したモデルが表示されます。",
       "stackToRouteNote": "集約したモデルは /model から外れます（リストは保持）。選択中の集約したモデルは通常のモデルに戻す必要があります。",
       "confirmRoute": "ルーティングを開始",
       "confirmStack": "集約に切り替え",
@@ -4463,7 +4499,7 @@
       "jsonMaskedUnknown": "「{{key}}」の値はまだプレースホルダーですが、下書きにこのキーの元の値がありません。実際の値を入力するか、先に「値を表示」にしてからキー名を変えてください。",
       "writeTo": "書き込み先",
       "writeToHelpTitle": "各アプリへの書き込み方",
-      "writeToHelp": "同じ設定をチェックした各アプリにそのまま書き込みます。アプリごとに引数を変えたいときは、そのアプリだけの項目を別に作ってください。MiniMax Code は接続項目だけを置き換え、mcp.json の他の項目は残します。",
+      "writeToHelp": "同じ設定をチェックした各アプリにそのまま書き込みます。アプリごとに引数を変えたいときは、そのアプリだけの項目を別に作ってください。MiniMax Code と Kimi Code は接続項目だけを置き換え、それぞれの mcp.json の他の項目は残します。",
       "meta": "説明とリンク",
       "metaHint": "表示名・説明・タグ・ホームページ・ドキュメント",
       "displayName": "表示名",

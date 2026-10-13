@@ -177,3 +177,32 @@ describe("injectCodingPlanUsageScript", () => {
     });
   });
 });
+
+describe("Kimi Code subscription usage", () => {
+  it("enables quota queries in both official regions", () => {
+    for (const host of ["api.kimi.com", "api.kimi.ai"]) {
+      const provider = injectCodingPlanUsageScript<TestProvider>("kimicode", {
+        settingsConfig: {
+          base_url: `https://${host}/coding/v1`,
+          api_key: "test-key",
+        },
+      });
+      expect(provider.meta?.usage_script).toMatchObject({
+        enabled: true,
+        templateType: "token_plan",
+        codingPlanProvider: "kimi",
+      });
+    }
+  });
+  it("keeps disabled preferences and excludes pay-as-you-go and lookalikes", () => {
+    const disabled = {
+      settingsConfig: { base_url: "https://api.kimi.com/coding/v1" },
+      meta: { usage_script: { enabled: false } },
+    };
+    expect(injectCodingPlanUsageScript("kimicode", disabled)).toBe(disabled);
+    expect(
+      detectCodingPlanProvider("https://api.kimi.com.evil.test/coding/v1"),
+    ).toBeNull();
+    expect(detectCodingPlanProvider("https://api.moonshot.cn/v1")).toBeNull();
+  });
+});

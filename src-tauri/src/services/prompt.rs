@@ -98,6 +98,10 @@ impl PromptService {
             return upsert_mcode_prompt(state, id, prompt, &prompt_file_path(&app)?);
         }
 
+        if app == AppType::KimiCode {
+            return upsert_kimicode_prompt(state, id, prompt, &prompt_file_path(&app)?);
+        }
+
         validate_prompt_content(&app, &prompt.content)?;
         let prompts = state.db.get_prompts(app.as_str())?;
         // 只有停用最后一条启用中的提示词时才清空文件；新建、导入或重存
@@ -132,6 +136,12 @@ impl PromptService {
                     .lock()
                     .map_err(|error| AppError::Message(error.to_string()))?,
             )
+        } else if app == AppType::KimiCode {
+            Some(
+                KIMICODE_PROMPT_LOCK
+                    .lock()
+                    .map_err(|error| AppError::Message(error.to_string()))?,
+            )
         } else {
             None
         };
@@ -153,6 +163,9 @@ impl PromptService {
         }
         if app == AppType::Mcode {
             return enable_mcode_prompt(state, id, &prompt_file_path(&app)?);
+        }
+        if app == AppType::KimiCode {
+            return enable_kimicode_prompt(state, id, &prompt_file_path(&app)?);
         }
 
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
@@ -288,6 +301,12 @@ impl PromptService {
         let _guard = if app == AppType::Mcode {
             Some(
                 MCODE_PROMPT_LOCK
+                    .lock()
+                    .map_err(|error| AppError::Message(error.to_string()))?,
+            )
+        } else if app == AppType::KimiCode {
+            Some(
+                KIMICODE_PROMPT_LOCK
                     .lock()
                     .map_err(|error| AppError::Message(error.to_string()))?,
             )
@@ -481,6 +500,89 @@ fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result
         target_path,
         || write_text_file(target_path, content),
         || state.db.save_mcode_prompts(&prompts),
+    )
+}
+
+static KIMICODE_PROMPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn upsert_kimicode_prompt(
+    state: &AppState,
+    id: &str,
+    prompt: Prompt,
+    target_path: &Path,
+) -> Result<(), AppError> {
+    let _guard = KIMICODE_PROMPT_LOCK
+        .lock()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    validate_prompt_content(&AppType::KimiCode, &prompt.content)?;
+    let prompts = state.db.get_prompts("kimicode")?;
+    let clear_live = !prompt.enabled
+        && prompts.get(id).is_some_and(|previous| previous.enabled)
+        && !prompts
+            .iter()
+            .any(|(key, prompt)| key != id && prompt.enabled)
+        && target_path.exists();
+    if !prompt.enabled && !clear_live {
+        return state.db.save_prompt("kimicode", &prompt);
+    }
+    crate::kimi_config::write_and_commit(
+        target_path,
+        || write_text_file(target_path, if clear_live { "" } else { &prompt.content }),
+        || state.db.save_prompt("kimicode", &prompt),
+    )
+}
+
+fn enable_kimicode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result<(), AppError> {
+    let _guard = KIMICODE_PROMPT_LOCK
+        .lock()
+        .map_err(|error| AppError::Message(error.to_string()))?;
+    let mut prompts = state.db.get_prompts("kimicode")?;
+    let target = prompts
+        .get(id)
+        .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
+    validate_prompt_content(&AppType::KimiCode, &target.content)?;
+
+    let live_content = match std::fs::read_to_string(target_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io(target_path, error)),
+    };
+    if !live_content.trim().is_empty() {
+        let timestamp = get_unix_timestamp()?;
+        if let Some(current) = prompts.values_mut().find(|prompt| prompt.enabled) {
+            current.content = live_content;
+            current.updated_at = Some(timestamp);
+        } else if !prompts
+            .values()
+            .any(|prompt| prompt.content.trim() == live_content.trim())
+        {
+            let backup_id = format!("backup-{}", uuid::Uuid::new_v4());
+            prompts.insert(
+                backup_id.clone(),
+                Prompt {
+                    id: backup_id,
+                    name: format!(
+                        "原始提示词 {}",
+                        chrono::Local::now().format("%Y-%m-%d %H:%M")
+                    ),
+                    content: live_content,
+                    description: Some("自动备份的原始提示词".to_string()),
+                    enabled: false,
+                    created_at: Some(timestamp),
+                    updated_at: Some(timestamp),
+                },
+            );
+        }
+    }
+    for (key, prompt) in &mut prompts {
+        prompt.enabled = key == id;
+    }
+    let content = &prompts[id].content;
+    validate_prompt_content(&AppType::KimiCode, content)?;
+    crate::kimi_config::write_and_commit(
+        target_path,
+        || write_text_file(target_path, content),
+        || state.db.save_kimicode_prompts(&prompts),
     )
 }
 

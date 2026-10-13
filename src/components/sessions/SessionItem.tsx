@@ -105,9 +105,14 @@ export function SessionItem({
     .join("\n");
 
   const deleteReason = !deletable
-    ? t("sessionManager.mcodeDeleteHint", {
-        defaultValue: "请在 MiniMax Code 中删除",
-      })
+    ? t(
+        session.providerId === "kimicode"
+          ? "sessionManager.kimicodeDeleteHint"
+          : "sessionManager.mcodeDeleteHint",
+        {
+          defaultValue: "请在 MiniMax Code 中删除",
+        },
+      )
     : null;
 
   return (

@@ -65,6 +65,16 @@ pub fn grok(projection: &GrokProjection) -> Contract {
     }
 }
 
+pub fn kimi(projection: &crate::live::project::kimi::KimiProjection) -> Contract {
+    Contract {
+        version: CONTRACT_VERSION,
+        key: key_of(
+            &json!({"app": "kimicode", "version": CONTRACT_VERSION, "projection": projection.to_value()}),
+        ),
+        exclusive: Map::new(),
+    }
+}
+
 fn sorted(map: &Map<String, Value>) -> Value {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));

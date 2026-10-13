@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code 的全方位管理工具
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code 的全方位管理工具
 
 **一键切换 API 供应商，统一管理 MCP、Skills 与提示词，不用再手改 JSON / TOML / YAML 配置文件。**
 
@@ -21,6 +21,14 @@
 **[下载安装](#下载安装) · [快速开始](#快速开始) · [功能特性](#功能特性) · [常见问题](#常见问题) · [用户手册](docs/user-manual/zh/README.md)**
 
 </div>
+
+> **Kimi Code 独立分支**：应用自身的更新检查、提示和安装已关闭。Kimi 供应商支持套餐、地区和多模型选择；Kimi Code 中的 Codex 账号供应商从官方账号接口获取可用模型、上下文及推理强度，用户勾选所需模型并指定默认模型。会话支持浏览、搜索和恢复，删除请使用 Kimi 原生界面。
+
+独立分支使用 `pnpm build:branch` 出包，版本号自动生成：`官方基础版本-kimicode.北京时间YYYYMMDDHHmmss`，并同步到应用、前端包和 Rust 包。Kimi Code 的供应商预设复用对应 Codex 模型目录，支持多选、默认模型、上下文和推理强度；没有对应目录的供应商保留原有设置。
+
+Kimi Code 官方订阅供应商自动显示额度用量，支持 5 小时、周额度（套餐返回时）、月总额度及月代码额度和重置时间；可在用量设置里关闭或调整查询频率。国内和国际订阅分别查询各自区域，按量付费供应商不套用订阅额度。
+
+安装包上传：使用 Node.js 22，设置 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` 后执行 `pnpm upload:oss`，默认上传当前版本 DMG 到 `digital-attic`（杭州）。可用 `OSS_BUCKET`、`OSS_ENDPOINT` 覆盖目标；`--file` 指定文件、`--prefix` 指定目录、`--expires` 指定链接有效秒数（默认 86400）。相同内容会跳过上传，冲突文件不会覆盖；上传后校验大小与 MD5 并返回签名下载链接。凭证仅通过环境变量传入，不写入仓库。
 
 ## ❤️赞助商
 
@@ -226,7 +234,7 @@ Claude Code、Codex、Gemini CLI 等 AI 编程工具各有各的配置格式。�
 
 **CC Switch** 把这些工作集中到一个桌面应用里：选一个预设、填入 Key，一键即可切换。切换时只替换地址、Key、模型这几项连接信息，你自己加的插件、Hook、MCP 和注释都原样保留。
 
-- **一个应用，十个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **一个应用，十一个工具** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code
 - **告别手动编辑** — 90+ 供应商预设，包括 AWS Bedrock、NVIDIA NIM 和社区中转服务
 - **直连、路由、聚合，按需选择** — 直连是工具直接连供应商；路由经本机转发，能转换接口格式、自动故障转移，让 Claude Code 用 GPT、Codex 用 Claude；聚合把多家供应商的模型放进 Claude Code 或 Codex 的同一个模型列表，选哪个模型，请求就发给哪一家
 - **MCP、Skills 与提示词集中管理** — MCP 和 Skills 添加一次，按工具勾选同步；提示词按工具分别维护
@@ -307,11 +315,11 @@ paru -S cc-switch-bin
 
 1. **添加供应商**：在侧栏选中要管理的工具，点击页面右上角的“+”（添加供应商）→ 选择预设或创建自定义配置
 2. **切换供应商**：
-   - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、MiniMax Code 的按钮为“添加”，Pi 为“启用 / 移除”；这五个是共存式工具，可以同时添加多个供应商）
+   - 主界面：选择供应商 → 点击“启用”（OpenCode、OpenClaw、Hermes、MiniMax Code、Kimi Code 的按钮为“添加”，Pi 为“启用 / 移除”；这六个是共存式工具，可以同时添加多个供应商）
    - 系统托盘：每个工具一行，显示“名称 · 模式 · 供应商 · 额度”，在子菜单里直接点击供应商名称（支持 Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）
 3. **生效方式**：Claude Code 无需重启；Codex、Gemini CLI、Grok Build 需重启终端或对应的 CLI 工具；Claude Desktop 需重启应用本身（详见常见问题）
 4. **恢复官方登录**：切换到列表中自带的官方供应商（如“Claude Official”），重启工具后按照其登录/OAuth 流程操作
-5. **路由与聚合（可选）**：Claude Code、Codex、Gemini CLI、Grok Build 的页面顶部有「直连 / 路由」标签，Claude Code 和 Codex 还有「聚合」。点标签只是切换查看的内容，不会改动配置；真正切换要点页面上的“开始路由”或“切换到聚合模式”，回到直连点“回到直连”。想在 Claude Code 里使用 OpenAI 或 Gemini 格式的供应商，或在 Codex 里使用 Claude，用路由；想在同一个模型列表里混用多家供应商的模型，用聚合
+5. **路由与聚合（可选）**：Claude Code、Codex、Gemini CLI、Grok Build、Kimi Code 的页面顶部有「直连 / 路由」标签，Claude Code、Codex、Kimi Code 还有「聚合」。点标签只是切换查看的内容，不会改动配置；真正切换要点页面上的“开始路由”或“切换到聚合模式”，回到直连点“回到直连”。想在 Claude Code 里使用 OpenAI 或 Gemini 格式的供应商，或在 Codex 里使用 Claude，用路由；想在同一个模型列表里混用多家供应商的模型，用聚合
 6. **管理工具**：侧栏的「应用」页集中显示每个 AI 编程工具的版本、安装位置和来源，可以安装、升级或全部升级，也可以选择哪些工具显示在侧栏
 
 ### MCP、提示词、Skills、项目与会话
@@ -345,6 +353,11 @@ paru -S cc-switch-bin
 | Hermes | 共存 | – | – | – | ✓ | ✓ | 记忆管理 | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、提示词模板 | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | 共存 | ✓ | ✓ | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+
+Kimi Code 直连时保留多供应商共存，路由和聚合使用独立的保留代理配置。配置目录优先级为 CC Switch 设置 > `KIMI_CODE_HOME` > `~/.kimi-code`；自定义目录后，启动 Kimi CLI 时需将 `KIMI_CODE_HOME` 设为同一路径。
+
+Kimi Code 支持通过账号登录使用 ChatGPT、GitHub Copilot 和 xAI；在添加供应商的「账号登录」分类中选择，并开启路由或聚合模式。账号凭证由本地授权中心管理，不写入 Kimi 的直连供应商表。
 
 - **切换**：同一时间只启用一个供应商；**共存**：多个供应商同时写入工具自身的配置，在工具里选择使用。
 - **本地路由**：由 CC Switch 在本机转发请求并转换接口格式，见下方[本地路由与故障转移](#本地路由与故障转移)。Claude Desktop 的供应商可选“直连”或“模型映射”，选“模型映射”时经本地路由转发。
@@ -366,7 +379,7 @@ paru -S cc-switch-bin
 ### 本地路由与故障转移
 
 - **接口格式转换** — 本地路由在 Anthropic Messages、OpenAI Chat Completions、OpenAI Responses 和 Gemini Native 之间转换请求格式：Claude Code 和 Claude Desktop 可以使用 OpenAI 或 Gemini 格式的供应商，Codex 和 Grok Build 可以使用 Chat Completions 或 Anthropic Messages 格式的供应商
-- **按工具开启** — Claude Code、Codex、Gemini CLI、Grok Build 可以分别进入路由模式：在页面顶部的「路由」标签里点“开始路由”。路由模式下，切换供应商会立即作用于后续请求（如果切换改变了模型，Codex、Gemini CLI 和 Grok Build 仍可能需要重启）。退出 CC Switch 时会先写回直连配置，下次启动再接上
+- **按工具开启** — Claude Code、Codex、Gemini CLI、Grok Build、Kimi Code 可以分别进入路由模式：在页面顶部的「路由」标签里点“开始路由”。路由模式下，切换供应商会立即作用于后续请求（如果切换改变了模型，Codex、Gemini CLI 和 Grok Build 仍可能需要重启）。退出 CC Switch 时会先写回直连配置，下次启动再接上
 - **自动故障转移** — 为每个工具配置故障转移队列，请求失败时按队列顺序自动改用下一个供应商，配合熔断器和供应商健康监控
 - **整流器** — 自动修正部分上游不兼容的请求（如 Thinking 签名、不支持图片时降级）
 - 官方供应商（如 Claude Official）不能走本地路由（Codex 的 OpenAI Official 除外）
@@ -383,7 +396,7 @@ paru -S cc-switch-bin
 
 ### MCP、提示词与 Skills
 
-- **统一 MCP 面板** — 一处管理所有 MCP 服务器，按工具勾选同步（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code），支持从各工具导入现有配置，支持 Deep Link 导入
+- **统一 MCP 面板** — 一处管理所有 MCP 服务器，按工具勾选同步（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code），支持从各工具导入现有配置，支持 Deep Link 导入
 - **提示词** — 按工具分别管理的提示词库，使用 Markdown 编辑器；启用后写入该工具的提示词文件（CLAUDE.md / AGENTS.md / GEMINI.md），启用前会先把文件里原有的内容存回提示词库，不会丢失。Pi 还可以编辑 SYSTEM.md、APPEND_SYSTEM.md 和提示词模板
 - **Skills** — 搜索 skills.sh，或从 GitHub 仓库、ZIP 文件一键安装；检查更新并一键全部更新；同步到各工具的方式可选自动、只用软链接或只用复制，存储位置可选 `~/.agents/skills`
 - 三个面板都支持搜索，MCP 和 Skills 还可以按工具一键全部启用或停用；供应商、MCP 和提示词都在内容区整页编辑，有未保存的修改时离开会先提醒
@@ -414,7 +427,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch 支持哪些 AI 工具？</strong></summary>
 
-CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
+CC Switch 支持十一个工具：**Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code**。每个工具都有专属的供应商预设和配置管理，各自支持哪些功能见[各工具支持的功能](#各工具支持的功能)。
 
 </details>
 
@@ -427,7 +440,7 @@ CC Switch 支持十个工具：**Claude Code**、**Claude Desktop**、**Codex**�
 - **Codex、Gemini CLI、Grok Build**：需要重启终端或 CLI 工具才能生效（切换成功后会有提示）。路由模式下，请求会立即转发到新供应商；但如果切换改变了模型，这三个工具仍可能需要重启。
 - **聚合模式**：Claude Code 的聚合模型改动立即生效；Codex 进入或退出聚合、改动聚合模型列表后都要彻底重启，见下一条。
 - **Claude Desktop**：需要完全退出并重新打开 Claude Desktop；使用“模型映射”时，还需要保持 CC Switch 运行。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code**：这些是共存式工具，点击“添加”（Pi 为“启用”）会把供应商写入工具自身的配置、与其他供应商共存，之后在工具里选择要使用的模型即可。
 
 </details>
 
@@ -469,7 +482,7 @@ Claude Code 不受影响，聚合模型改动立即生效。
 
 本软件的设计原则是“最小侵入性”，即使卸载本软件，也不会影响应用的正常使用。
 
-所以对于同一时间只启用一个供应商的工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build），系统总会保留一个正在使用的配置，因为如果将所有配置全部删除，该应用将无法正常使用；想删它，先切换到别家。聚合模式下的默认供应商同样不能移除，先把别家设为默认。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code 等共存式工具不受此限制，可以直接删除任意供应商。如果你不常用某个工具，可以在侧栏的「应用」页里把它从侧栏隐藏。如果你想切换回官方登录，可以参考下条。
+所以对于同一时间只启用一个供应商的工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build），系统总会保留一个正在使用的配置，因为如果将所有配置全部删除，该应用将无法正常使用；想删它，先切换到别家。聚合模式下的默认供应商同样不能移除，先把别家设为默认。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code 等共存式工具不受此限制，可以直接删除任意供应商。如果你不常用某个工具，可以在侧栏的「应用」页里把它从侧栏隐藏。如果你想切换回官方登录，可以参考下条。
 
 </details>
 
@@ -533,7 +546,7 @@ Codex 还可以在 CC Switch 里用“使用 ChatGPT 登录”登录多个 ChatG
 <details>
 <summary><strong>在 Windows 上怎么管理 WSL 里的工具？</strong></summary>
 
-CC Switch 不会自动识别 WSL。请在「设置 → 应用配置」里，把对应工具的配置目录改成 WSL 里的路径，例如 `\\wsl.localhost\Ubuntu\home\<用户名>\.claude`，保存后 CC Switch 就会读写 WSL 里的配置（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi 支持设置）。设置之后，侧栏的「应用」页也会在对应的 WSL 发行版里检测和升级该工具。
+CC Switch 不会自动识别 WSL。请在「设置 → 应用配置」里，把对应工具的配置目录改成 WSL 里的路径，例如 `\\wsl.localhost\Ubuntu\home\<用户名>\.claude`，保存后 CC Switch 就会读写 WSL 里的配置（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、Kimi Code 支持设置）。设置之后，侧栏的「应用」页也会在对应的 WSL 发行版里检测和升级该工具。
 
 注意：路由和聚合写入配置的地址是 `127.0.0.1`。WSL2 默认的 NAT 网络模式下，WSL 里的 `127.0.0.1` 连不到 Windows 上的本地路由，需要改用 WSL 的 mirrored 网络模式。
 

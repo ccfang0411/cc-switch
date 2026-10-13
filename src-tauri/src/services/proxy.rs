@@ -182,11 +182,12 @@ impl ProxyService {
     /// 各应用是否处于代理模式（读设备本地的模式状态，不读会随云同步的
     /// `proxy_config.enabled`）。
     pub async fn get_takeover_status(&self) -> Result<ProxyTakeoverStatus, String> {
-        let [claude, codex, gemini, grokbuild] = crate::mode::current::proxy_flags([
+        let [claude, codex, gemini, grokbuild, kimicode] = crate::mode::current::proxy_flags([
             AppType::Claude,
             AppType::Codex,
             AppType::Gemini,
             AppType::GrokBuild,
+            AppType::KimiCode,
         ]);
         Ok(ProxyTakeoverStatus {
             claude,
@@ -196,6 +197,7 @@ impl ProxyService {
             // OpenCode and OpenClaw don't support proxy features
             opencode: false,
             openclaw: false,
+            kimicode,
         })
     }
 
@@ -299,6 +301,7 @@ impl ProxyService {
                 Ok(config) => Self::is_grok_live_taken_over(&config),
                 Err(_) => false,
             },
+            AppType::KimiCode => crate::kimi_config::live_has_proxy_placeholder(),
             _ => false,
         }
     }
@@ -311,6 +314,7 @@ impl ProxyService {
             AppType::Codex => Self::is_codex_live_taken_over(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
+            AppType::KimiCode => Self::is_kimi_row_taken_over(config),
             _ => false,
         }
     }
@@ -318,7 +322,7 @@ impl ProxyService {
     /// 是否有应用处于代理模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
         let status = self.get_takeover_status().await?;
-        Ok(status.claude || status.codex || status.gemini || status.grokbuild)
+        Ok(status.claude || status.codex || status.gemini || status.grokbuild || status.kimicode)
     }
 
     fn is_claude_live_taken_over(config: &Value) -> bool {
@@ -383,6 +387,11 @@ impl ProxyService {
             .is_some_and(|config_toml| {
                 crate::grok_config::has_proxy_placeholder(config_toml, PROXY_TOKEN_PLACEHOLDER)
             })
+    }
+
+    /// Kimi Code 供应商行带着占位 Key：代理模式下供应商行从不改写，带着它的是残留。
+    fn is_kimi_row_taken_over(config: &Value) -> bool {
+        config.get("api_key").and_then(Value::as_str) == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
     // ==================== Live 配置读写辅助方法 ====================

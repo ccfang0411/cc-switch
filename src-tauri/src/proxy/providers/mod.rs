@@ -26,6 +26,7 @@ mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;
+pub(crate) mod kimi;
 pub mod models;
 pub(crate) mod reasoning_bridge;
 pub(crate) mod responses_late_arguments;
@@ -70,6 +71,7 @@ pub use codex::{
     strip_codex_hosted_web_search,
 };
 pub use gemini::GeminiAdapter;
+pub use kimi::{kimi_api_format, KimiAdapter};
 
 /// 供应商类型枚举
 ///
@@ -214,6 +216,24 @@ impl ProviderType {
             }
             AppType::GrokBuild => ProviderType::Codex,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
+            // Kimi Code 的上行协议按行的 `type` 选（见 `kimi::kimi_api_format`）：
+            // anthropic 行按 Anthropic 供应商对待（整流器放行），其余不属于现有枚举。
+            AppType::KimiCode => {
+                if provider.is_github_copilot() {
+                    return Some(ProviderType::GitHubCopilot);
+                }
+                if provider.is_codex_oauth() {
+                    return Some(ProviderType::CodexOAuth);
+                }
+                if provider.is_xai_oauth() {
+                    return Some(ProviderType::XaiOAuth);
+                }
+                if kimi_api_format(provider) == "anthropic" {
+                    ProviderType::Claude
+                } else {
+                    return None;
+                }
+            }
             AppType::Pi | AppType::Mcode => return None,
         };
         Some(provider_type)
@@ -270,6 +290,7 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
+        AppType::KimiCode => Box::new(KimiAdapter::new()),
         AppType::Pi | AppType::Mcode => return None,
     })
 }

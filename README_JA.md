@@ -2,7 +2,7 @@
 
 # CC Switch
 
-### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code のオールインワン管理ツール
+### Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes Agent、Pi、MiniMax Code、Kimi Code のオールインワン管理ツール
 
 **ワンクリックで API プロバイダを切り替え、MCP・Skills・プロンプトを一元管理。JSON / TOML / YAML の設定ファイルを手作業で編集する必要はもうありません。**
 
@@ -21,6 +21,8 @@
 **[ダウンロード](#ダウンロード--インストール) · [クイックスタート](#クイックスタート) · [特長](#特長) · [よくある質問](#よくある質問) · [ユーザーマニュアル](docs/user-manual/ja/README.md)**
 
 </div>
+
+> **Kimi Code 独立ブランチ**：アプリ本体の更新確認・通知・インストールは無効です。Kimi のプラン・地域・複数モデルを選択できます。Kimi Code の Codex アカウントでは公式エンドポイントからモデル・コンテキスト・推論強度を取得し、利用モデルと既定モデルを選択できます。セッションの閲覧・検索・再開に対応し、削除は Kimi 本体で行います。
 
 ## ❤️スポンサー
 
@@ -225,7 +227,7 @@ Claude Code、Codex、Gemini CLI などの AI コーディングツールは、�
 
 **CC Switch** は、こうした作業を 1 つのデスクトップアプリに集約します。プリセットを選んでキーを入力すれば、ワンクリックで切り替えられます。切り替え時に置き換えるのはアドレス、キー、モデルといった接続情報だけで、自分で追加したプラグイン、フック、MCP、コメントはそのまま残ります。
 
-- **1 つのアプリで 10 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code
+- **1 つのアプリで 11 のツール** — Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code
 - **手動編集は不要** — AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 90 以上のプロバイダプリセットを内蔵
 - **直接接続・ルーティング・集約を用途に応じて選択** — 直接接続はツールがプロバイダへ直接つなぎます。ルーティングはローカルで転送し、API 形式の変換と自動フェイルオーバーにより、Claude Code で GPT を、Codex で Claude を使えるようにします。集約は複数のプロバイダのモデルを Claude Code や Codex の 1 つのモデル一覧にまとめ、選んだモデルに応じてそのプロバイダへリクエストを送ります
 - **MCP・Skills・プロンプトを一元管理** — MCP と Skills は一度追加すれば、ツールごとにチェックを入れて同期。プロンプトはツールごとに個別に管理
@@ -306,11 +308,11 @@ paru -S cc-switch-bin
 
 1. **プロバイダ追加**: サイドバーで管理するツールを選び、ページ右上の「+」（プロバイダーを追加）をクリック → プリセットを選ぶかカスタム設定を作成
 2. **プロバイダ切り替え**:
-   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code ではボタンが「追加」、Pi では「有効にする / 削除」になります。この 5 つは共存型のツールで、複数のプロバイダを同時に追加できます）
+   - メイン UI: プロバイダを選択 → 「有効化」をクリック（OpenCode、OpenClaw、Hermes、MiniMax Code、Kimi Code ではボタンが「追加」、Pi では「有効にする / 削除」になります。この 6 つは共存型のツールで、複数のプロバイダを同時に追加できます）
    - システムトレイ: ツールごとに 1 行で「名前 · モード · プロバイダ · クォータ」を表示。サブメニューでプロバイダ名をクリック（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build に対応）
 3. **反映**: Claude Code は再起動不要。Codex、Gemini CLI、Grok Build はターミナルまたは CLI ツールを再起動、Claude Desktop はアプリ自体を再起動（詳しくはよくある質問を参照）
 4. **公式ログインに戻す**: リストに含まれている公式プロバイダ（例：「Claude Official」）に切り替え、ツールを再起動してログイン/OAuth フローを実行
-5. **ルーティングと集約（任意）**: Claude Code、Codex、Gemini CLI、Grok Build のページ上部には「直接接続 / ルーティング」タブがあり、Claude Code と Codex には「集約」タブもあります。タブを押しても表示内容が切り替わるだけで、設定は変わりません。実際に切り替えるにはページ上の「ルーティングを開始」または「集約に切り替え」を、直接接続に戻すには「直接接続に戻す」をクリックします。Claude Code で OpenAI 形式や Gemini 形式のプロバイダを使う場合や、Codex で Claude を使う場合はルーティングを、複数のプロバイダのモデルを 1 つのモデル一覧で使い分けたい場合は集約を使います
+5. **ルーティングと集約（任意）**: Claude Code、Codex、Gemini CLI、Grok Build、Kimi Code のページ上部には「直接接続 / ルーティング」タブがあり、Claude Code、Codex、Kimi Code には「集約」タブもあります。タブを押しても表示内容が切り替わるだけで、設定は変わりません。実際に切り替えるにはページ上の「ルーティングを開始」または「集約に切り替え」を、直接接続に戻すには「直接接続に戻す」をクリックします。Claude Code で OpenAI 形式や Gemini 形式のプロバイダを使う場合や、Codex で Claude を使う場合はルーティングを、複数のプロバイダのモデルを 1 つのモデル一覧で使い分けたい場合は集約を使います
 6. **ツール管理**: サイドバーの「アプリ」ページに、各 AI コーディングツールのバージョン、インストール場所、インストール元がまとめて表示されます。インストール、アップグレード、一括アップグレードができ、サイドバーに表示するツールも選べます
 
 ### MCP、プロンプト、Skills、プロジェクト & セッション
@@ -344,6 +346,11 @@ paru -S cc-switch-bin
 | Hermes | 共存 | – | – | – | ✓ | ✓ | メモリ | ✓ | – |
 | Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md、SYSTEM.md、プロンプトテンプレート | ✓ | ✓ |
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+| Kimi Code | 共存 | ✓ | ✓ | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
+
+Kimi Code は直結モードで複数のプロバイダーを共存させ、ルーティングと集約では独立した予約済みプロキシ設定を使います。設定ディレクトリの優先順位は CC Switch の設定 > `KIMI_CODE_HOME` > `~/.kimi-code` です。Kimi CLI の起動時には `KIMI_CODE_HOME` を同じカスタムパスに設定してください。
+
+Kimi Code は「アカウントログイン」から ChatGPT、GitHub Copilot、xAI のアカウントを利用できます。ルーティングまたは集約モードを有効にしてください。認証情報はローカルの認証センターで管理し、Kimi の直結プロバイダー設定には書き込みません。
 
 - **切り替え**：同時に有効にできるプロバイダは 1 つだけです。**共存**：複数のプロバイダを同時にツール自身の設定に書き込み、ツール内で選んで使用します。
 - **ローカルルーティング**：CC Switch がローカルでリクエストを転送し、API 形式を変換します。詳しくは下記の[ローカルルーティング & フェイルオーバー](#ローカルルーティング--フェイルオーバー)をご覧ください。Claude Desktop のプロバイダでは「直接接続」か「モデルマッピング」を選択でき、「モデルマッピング」を選ぶとローカルルーティング経由で転送されます。
@@ -365,7 +372,7 @@ paru -S cc-switch-bin
 ### ローカルルーティング & フェイルオーバー
 
 - **API 形式の変換** — ローカルルーティングが Anthropic Messages、OpenAI Chat Completions、OpenAI Responses、Gemini Native の間でリクエスト形式を変換。Claude Code と Claude Desktop は OpenAI 形式や Gemini 形式のプロバイダを、Codex と Grok Build は Chat Completions 形式や Anthropic Messages 形式のプロバイダを利用可能
-- **ツールごとに有効化** — Claude Code、Codex、Gemini CLI、Grok Build はそれぞれ個別にルーティングモードに入れます。ページ上部の「ルーティング」タブで「ルーティングを開始」をクリックします。ルーティングモードでは、プロバイダの切り替えが以降のリクエストに即座に反映（切り替えでモデルが変わる場合、Codex、Gemini CLI、Grok Build は再起動が必要になることがあります）。CC Switch を終了するときは先に直接接続の設定を書き戻し、次回起動時に再接続します
+- **ツールごとに有効化** — Claude Code、Codex、Gemini CLI、Grok Build、Kimi Code はそれぞれ個別にルーティングモードに入れます。ページ上部の「ルーティング」タブで「ルーティングを開始」をクリックします。ルーティングモードでは、プロバイダの切り替えが以降のリクエストに即座に反映（切り替えでモデルが変わる場合、Codex、Gemini CLI、Grok Build は再起動が必要になることがあります）。CC Switch を終了するときは先に直接接続の設定を書き戻し、次回起動時に再接続します
 - **自動フェイルオーバー** — ツールごとにフェイルオーバーキューを設定し、リクエストが失敗するとキューの順に次のプロバイダへ自動で切り替え。サーキットブレーカーとプロバイダのヘルスモニタリングと連携
 - **整流器** — 一部の上流と互換性のないリクエストを自動で修正（Thinking 署名、画像非対応時のフォールバックなど）
 - 公式プロバイダ（Claude Official など）はローカルルーティングを経由できません（Codex の OpenAI Official を除く）
@@ -382,7 +389,7 @@ paru -S cc-switch-bin
 
 ### MCP、プロンプト & Skills
 
-- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code）。各ツールの既存設定からのインポート、Deep Link インポートに対応
+- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code）。各ツールの既存設定からのインポート、Deep Link インポートに対応
 - **プロンプト** — ツールごとに管理するプロンプトライブラリ（Markdown エディタ付き）。有効化すると、そのツールのプロンプトファイル（CLAUDE.md / AGENTS.md / GEMINI.md）に書き込み。有効化の前にファイル内の既存の内容をプロンプトライブラリへ保存するため、内容が失われることはありません。Pi では SYSTEM.md、APPEND_SYSTEM.md、プロンプトテンプレートも編集可能
 - **Skills** — skills.sh を検索、または GitHub リポジトリや ZIP ファイルからワンクリックでインストール。更新の確認とワンクリックでの一括更新に対応。各ツールへの同期方式は「自動」「シンボリックリンクのみ」「コピーのみ」から選べ、保存場所として `~/.agents/skills` も選択可能
 - 3 つのパネルはいずれも検索に対応。MCP と Skills はツールごとにワンクリックで一括有効化・一括無効化も可能。プロバイダ、MCP、プロンプトはコンテンツ領域の全画面で編集し、未保存の変更があるままページを離れようとすると確認が表示されます
@@ -413,7 +420,7 @@ paru -S cc-switch-bin
 <details>
 <summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
 
-CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code** の 10 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**Grok Build**、**OpenCode**、**OpenClaw**、**Hermes**、**Pi**、**MiniMax Code**、**Kimi Code** の 11 のツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。ツールごとに対応している機能は[ツール別の対応機能](#ツール別の対応機能)をご覧ください。
 
 </details>
 
@@ -426,7 +433,7 @@ CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**�
 - **Codex、Gemini CLI、Grok Build**：変更を反映するにはターミナルまたは CLI ツールを再起動してください（切り替え後に通知が表示されます）。ルーティングモードでは、リクエストは即座に新しいプロバイダへ転送されますが、切り替えでモデルが変わる場合は、この 3 つのツールは再起動が必要になることがあります。
 - **集約モード**：Claude Code の集約モデルの変更はすぐに反映されます。Codex は集約モードに入る・抜ける、または集約モデルの一覧を変更した後、完全に再起動する必要があります。次の質問をご覧ください。
 - **Claude Desktop**：Claude Desktop を完全に終了してから再度開いてください。「モデルマッピング」を使用する場合は、CC Switch を起動したままにしておく必要もあります。
-- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
+- **OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code**：これらは共存型のツールです。「追加」（Pi では「有効化」）をクリックするとプロバイダがツール自身の設定に書き込まれ、他のプロバイダと共存します。その後、ツール内で使用するモデルを選んでください。
 
 </details>
 
@@ -468,7 +475,7 @@ Claude Code は影響を受けず、集約モデルの変更はすぐに反映�
 
 CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、各ツールは正常に動作し続けます。
 
-そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常に使用中の設定を 1 つ保持します。削除したい場合は、先に別のプロバイダに切り替えてください。集約モードの既定のプロバイダも同様に削除できないので、先に別のプロバイダを既定にしてください。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、サイドバーの「アプリ」ページでサイドバーから非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+そのため、同時に 1 つのプロバイダのみ有効なツール（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）では、すべての設定を削除すると対応するツールが使用できなくなるため、システムは常に使用中の設定を 1 つ保持します。削除したい場合は、先に別のプロバイダに切り替えてください。集約モードの既定のプロバイダも同様に削除できないので、先に別のプロバイダを既定にしてください。OpenCode、OpenClaw、Hermes、Pi、MiniMax Code、Kimi Code などの共存型ツールにはこの制限がなく、どのプロバイダでも直接削除できます。あまり使わないツールがある場合は、サイドバーの「アプリ」ページでサイドバーから非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
 
 </details>
 
@@ -532,7 +539,7 @@ Codex では、CC Switch 内の「ChatGPT でログイン」から複数の Chat
 <details>
 <summary><strong>Windows で WSL 内のツールを管理するには？</strong></summary>
 
-CC Switch は WSL を自動では認識しません。「設定 → アプリ設定」で、対象ツールの設定ディレクトリを WSL 内のパス（例：`\\wsl.localhost\Ubuntu\home\<ユーザー名>\.claude`）に変更して保存すると、CC Switch は WSL 内の設定を読み書きするようになります（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi で設定可能）。設定後は、サイドバーの「アプリ」ページでも対応する WSL ディストリビューション内でそのツールを検出・アップグレードします。
+CC Switch は WSL を自動では認識しません。「設定 → アプリ設定」で、対象ツールの設定ディレクトリを WSL 内のパス（例：`\\wsl.localhost\Ubuntu\home\<ユーザー名>\.claude`）に変更して保存すると、CC Switch は WSL 内の設定を読み書きするようになります（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、Hermes、Pi、Kimi Code で設定可能）。設定後は、サイドバーの「アプリ」ページでも対応する WSL ディストリビューション内でそのツールを検出・アップグレードします。
 
 注意：ルーティングと集約が設定に書き込むアドレスは `127.0.0.1` です。WSL2 のデフォルトである NAT ネットワークモードでは、WSL 内の `127.0.0.1` から Windows 上のローカルルーティングに接続できないため、WSL の mirrored ネットワークモードに切り替える必要があります。
 

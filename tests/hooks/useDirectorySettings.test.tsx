@@ -73,6 +73,7 @@ describe("useDirectorySettings", () => {
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "pi") return "/remote/pi";
+      if (app === "kimicode") return "/remote/kimicode";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -98,6 +99,7 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
+      kimicode: "/remote/kimicode",
     });
   });
 
@@ -262,6 +264,38 @@ describe("useDirectorySettings", () => {
       openclawConfigDir: "/picked/openclaw",
     });
     expect(result.current.resolvedDirs.openclaw).toBe("/picked/openclaw");
+  });
+
+  it("updates kimicode directory when browsing and resets to the .kimi-code default", async () => {
+    selectConfigDirectoryMock.mockResolvedValue("/picked/kimicode");
+
+    const { result } = renderHook(() =>
+      useDirectorySettings({
+        settings: createSettings({ kimicodeConfigDir: undefined }),
+        onUpdateSettings,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.browseDirectory("kimicode");
+    });
+
+    expect(selectConfigDirectoryMock).toHaveBeenCalledWith("/remote/kimicode");
+    expect(onUpdateSettings).toHaveBeenCalledWith({
+      kimicodeConfigDir: "/picked/kimicode",
+    });
+    expect(result.current.resolvedDirs.kimicode).toBe("/picked/kimicode");
+
+    await act(async () => {
+      await result.current.resetDirectory("kimicode");
+    });
+
+    expect(onUpdateSettings).toHaveBeenCalledWith({
+      kimicodeConfigDir: undefined,
+    });
+    expect(result.current.resolvedDirs.kimicode).toBe("/home/mock/.kimi-code");
   });
 
   it("resetAllDirectories applies provided resolved values", async () => {

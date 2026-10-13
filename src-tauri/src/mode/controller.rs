@@ -34,7 +34,7 @@ use crate::provider::Provider;
 use crate::services::provider::codex_client_catalog;
 use crate::services::provider::codex_direct::{self, Owner};
 use crate::services::provider::codex_official_models;
-use crate::services::provider::{claude_direct, gemini_direct, grok_direct};
+use crate::services::provider::{claude_direct, gemini_direct, grok_direct, kimi_direct};
 use crate::store::AppState;
 
 use super::contract;
@@ -44,11 +44,12 @@ use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
 /// 支持代理模式的应用。
-pub const PROXY_APPS: [AppType; 4] = [
+pub const PROXY_APPS: [AppType; 5] = [
     AppType::Claude,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::KimiCode,
 ];
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -485,6 +486,28 @@ async fn write_proxy(
             .map_err(err)?;
             unchanged
         }
+        AppType::KimiCode => {
+            let members = published_members(state, app, &stack, route)?;
+            let projection = crate::live::project::kimi::KimiProjection::proxy(
+                route,
+                &format!("{}/kimicode", proxy_url.trim_end_matches('/')),
+                &members,
+            )
+            .map_err(err)?;
+            let contract = contract::kimi(&projection);
+            let unchanged = !force && live_now.has_contract(&contract.key);
+            target.contract = Some(contract);
+            let mut pending = pending(target);
+            pending.pointer = live_now.direct_owner().map(|p| p.id.clone());
+            kimi_direct::run(
+                &state.db,
+                op_name,
+                (!unchanged).then_some(&projection),
+                pending,
+            )
+            .map_err(err)?;
+            unchanged
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     };
     Ok(!unchanged)
@@ -574,6 +597,31 @@ fn write_direct(
             )
             .map_err(err)?;
         }
+        AppType::KimiCode => {
+            let projection = direct_or_empty(
+                app,
+                direct.as_ref(),
+                |p| crate::live::project::kimi::KimiProjection::direct(Some(p)),
+                || {
+                    crate::live::project::kimi::KimiProjection::direct(None)
+                        .expect("empty Kimi projection")
+                },
+            );
+            let projection = projection.restore_additive_rows(
+                state
+                    .db
+                    .get_all_providers("kimicode")
+                    .map_err(err)?
+                    .into_values(),
+            );
+            kimi_direct::run(
+                &state.db,
+                op_name,
+                attached.then_some(&projection),
+                pending_target,
+            )
+            .map_err(err)?;
+        }
         _ => return Err(format!("{} 不支持本地路由", app.as_str())),
     }
     Ok(())
@@ -604,6 +652,9 @@ fn direct_or_empty<P>(
 /// 否则客户端会一直指着已经不在的本地代理。
 fn usable_direct<'a>(app: &AppType, direct: Option<&'a Provider>) -> Option<&'a Provider> {
     direct.filter(|provider| {
+        if *app == AppType::KimiCode && crate::proxy::providers::kimi::managed_auth(provider) {
+            return false;
+        }
         let polluted = crate::services::ProxyService::config_has_proxy_placeholder(
             app,
             &provider.settings_config,
@@ -2529,6 +2580,251 @@ mod mode_tests {
         };
         assert_eq!(keys(&live), keys(&original));
         assert_eq!(keys(&live["env"]), keys(&original["env"]));
+    }
+
+    fn kimi_row(id: &str) -> Provider {
+        Provider::with_id(
+            id.into(),
+            id.into(),
+            json!({"type": "openai", "base_url": "http://127.0.0.1:1/v1", "api_key": "real-key",
+            "model": {"model": format!("model-{id}"), "max_context_size": 32768}}),
+            None,
+        )
+    }
+
+    /// Explicit opt-in: runs the installed CLI against a loopback-only mock upstream.
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    #[ignore = "requires installed Kimi Code CLI and loopback networking"]
+    async fn kimi_cli_real_direct_routing_stack_and_restore() {
+        let _home = Home::new();
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+        let capture = captured.clone();
+        let router = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let capture = capture.clone();
+            async move {
+                let model = body["model"].as_str().unwrap().to_string();
+                capture.lock().await.push(model.clone());
+                let mut data = String::new();
+                for chunk in [
+                    json!({"id":"chatcmpl-test","object":"chat.completion.chunk","model":model,"choices":[{"index":0,"delta":{"role":"assistant","content":"KIMI_LOOPBACK_OK"},"finish_reason":null}]}),
+                    json!({"id":"chatcmpl-test","object":"chat.completion.chunk","model":model,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}})
+                ] { data.push_str(&format!("data: {chunk}\n\n")); }
+                data.push_str("data: [DONE]\n\n");
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], data)
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut a = kimi_row("a");
+        let mut b = kimi_row("b");
+        for row in [&mut a, &mut b] {
+            row.settings_config["base_url"] = json!(format!("http://{addr}/v1"));
+        }
+        a.settings_config["models"] = json!([
+            a.settings_config["model"].clone(),
+            {"model": "model-a-extra", "max_context_size": 65536}
+        ]);
+        crate::kimi_config::set_provider("b", b.settings_config.clone()).unwrap();
+        crate::kimi_config::set_provider("a", a.settings_config.clone()).unwrap();
+        let app = AppType::KimiCode;
+        let state = state_with(app.clone(), &[a, b], "a").await;
+        async fn cli(model: Option<&str>) {
+            let binary = std::env::var("CC_SWITCH_KIMI_BINARY")
+                .expect("set CC_SWITCH_KIMI_BINARY to installed kimi executable");
+            let mut command = std::process::Command::new(binary);
+            command
+                .env("KIMI_CODE_HOME", crate::kimi_config::data_dir())
+                .current_dir(crate::kimi_config::data_dir())
+                .args(["-p", "Reply KIMI_LOOPBACK_OK without tools."]);
+            if let Some(model) = model {
+                command.args(["--model", model]);
+            }
+            let output = tokio::task::spawn_blocking(move || {
+                use std::process::Stdio;
+                let mut child = command
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .expect("CLI launch");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+                loop {
+                    if child.try_wait().unwrap().is_some() {
+                        break;
+                    }
+                    if std::time::Instant::now() > deadline {
+                        let _ = child.kill();
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                child.wait_with_output().unwrap()
+            })
+            .await
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "CLI failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("KIMI_LOOPBACK_OK"),
+                "CLI output: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        cli(None).await;
+        cli(Some("cc-switch:a/model-a-extra")).await;
+        enter(&state, &app, false).await.unwrap();
+        cli(None).await;
+        cli(Some("cc-switch:proxy/model-a-extra")).await;
+        enter(&state, &app, true).await.unwrap();
+        set_stack_member(&state, &app, "b", true).await.unwrap();
+        cli(Some("cc-switch:proxy/ccs-kimi-b--model-b")).await;
+        cli(Some("cc-switch:proxy/ccs-kimi-a--model-a-extra")).await;
+        exit(&state, &app).await.unwrap();
+        cli(None).await;
+        assert_eq!(
+            *captured.lock().await,
+            vec![
+                "model-a",
+                "model-a-extra",
+                "model-a",
+                "model-a-extra",
+                "model-b",
+                "model-a-extra",
+                "model-a"
+            ]
+        );
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn kimi_anthropic_route_preserves_native_headers() {
+        let _home = Home::new();
+        let router = axum::Router::new().route("/v1/messages", axum::routing::post(
+            |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                assert_eq!(headers.get("anthropic-version").and_then(|v| v.to_str().ok()), Some("2023-06-01"));
+                assert_eq!(headers.get("anthropic-beta").and_then(|v| v.to_str().ok()), Some("native-test-beta"));
+                assert_eq!(headers.get("x-api-key").and_then(|v| v.to_str().ok()), Some("real-key"));
+                axum::Json(json!({"id":"msg_kimi_native","type":"message","role":"assistant","model":body["model"],
+                    "content":[{"type":"text","text":"NATIVE_OK"}],"stop_reason":"end_turn", "stop_sequence":null,
+                    "usage":{"input_tokens":10,"output_tokens":2}}))
+            }
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let mut row = kimi_row("native");
+        row.settings_config["type"] = json!("anthropic");
+        row.settings_config["base_url"] = json!(format!("http://{addr}"));
+        let app = AppType::KimiCode;
+        let state = state_with(app.clone(), &[row], "native").await;
+        enter(&state, &app, false).await.unwrap();
+        let text = fs::read_to_string(crate::kimi_config::config_path()).unwrap();
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        let base = doc["providers"]["cc-switch:proxy"]["base_url"]
+            .as_str()
+            .unwrap();
+        let response = reqwest::Client::new().post(format!("{base}/v1/messages"))
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "native-test-beta")
+            .json(&json!({"model":"model-native","max_tokens":32,"messages":[{"role":"user","content":"Hi"}]}))
+            .send().await.unwrap();
+        assert!(
+            response.status().is_success(),
+            "{}",
+            response.text().await.unwrap()
+        );
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["content"][0]["text"], "NATIVE_OK");
+        exit(&state, &app).await.unwrap();
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn kimi_modes_preserve_provider_tables_and_restore_direct_pointer() {
+        let _home = Home::new();
+        let custom = _home.dir.path().join("custom-kimi");
+        let mut config = crate::settings::get_settings();
+        config.kimicode_config_dir = Some(custom.to_string_lossy().into_owned());
+        crate::settings::update_settings(config).unwrap();
+        assert_eq!(crate::kimi_config::data_dir(), custom);
+        let app = AppType::KimiCode;
+        let a = kimi_row("a");
+        let b = kimi_row("b");
+        crate::kimi_config::set_provider("a", a.settings_config.clone()).unwrap();
+        crate::kimi_config::set_provider("b", b.settings_config.clone()).unwrap();
+        let state = state_with(app.clone(), &[a.clone(), b.clone()], "b").await;
+        enter(&state, &app, false).await.unwrap();
+        let read = || {
+            fs::read_to_string(crate::kimi_config::config_path())
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap()
+        };
+        let doc = read();
+        assert_eq!(
+            doc["providers"]["cc-switch:proxy"]["type"].as_str(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            doc["providers"]["cc-switch:b"]["api_key"].as_str(),
+            Some("real-key")
+        );
+        assert!(!crate::kimi_config::get_providers()
+            .unwrap()
+            .contains_key("proxy"));
+        assert!(!crate::kimi_config::provider_key_exists("proxy").unwrap());
+        switch_route(&state, &app, "a").await.unwrap();
+        assert_eq!(direct(&state, &app).as_deref(), Some("b"));
+        enter(&state, &app, true).await.unwrap();
+        set_stack_member(&state, &app, "b", true).await.unwrap();
+        let view = stack_views(&state, &app).unwrap();
+        assert!(view.active);
+        assert_eq!(view.members.len(), 2);
+        for id in ["ccs-kimi-a--model-a", "ccs-kimi-b--model-b"] {
+            let doc = read();
+            assert!(doc["models"]
+                .get(&format!("cc-switch:proxy/{id}"))
+                .is_some());
+            assert!(matches!(
+                stack::resolve(&state.db, &DeviceStore::for_device(), &app, id).unwrap(),
+                stack::Resolved::Hit(_)
+            ));
+        }
+        let mut edited = b.clone();
+        edited.settings_config["model"]["model"] = json!("updated-b");
+        crate::services::ProviderService::update(&state, app.clone(), None, edited.clone())
+            .unwrap();
+        assert_eq!(
+            read()["models"]["cc-switch:b/model-b"]["model"].as_str(),
+            Some("model-b")
+        );
+        let listed = crate::services::ProviderService::list(&state, app.clone()).unwrap();
+        assert_eq!(listed["b"].settings_config, edited.settings_config);
+        assert!(read()["models"]
+            .get("cc-switch:proxy/ccs-kimi-b--updated-b")
+            .is_some());
+        exit(&state, &app).await.unwrap();
+        let doc = read();
+        assert_eq!(doc["default_model"].as_str(), Some("cc-switch:b/updated-b"));
+        assert!(doc["providers"].get("cc-switch:proxy").is_none());
+        assert_eq!(crate::kimi_config::get_providers().unwrap().len(), 2);
+        assert!(!state.proxy_service.is_running().await);
+        // Legacy polluted rows must never keep the client pointing at a stopped proxy.
+        edited.settings_config["api_key"] = json!(PROXY_TOKEN_PLACEHOLDER);
+        state.db.save_provider("kimicode", &edited).unwrap();
+        enter_with_route(&state, &app, false, Some("a"))
+            .await
+            .unwrap();
+        exit(&state, &app).await.unwrap();
+        assert!(read().get("default_model").is_none());
+        assert!(!crate::kimi_config::live_has_proxy_placeholder());
     }
 
     #[tokio::test]

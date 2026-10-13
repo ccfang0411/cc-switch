@@ -69,7 +69,8 @@ impl Database {
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
-            enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            enabled_pi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimicode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -99,6 +100,7 @@ impl Database {
             enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_kimicode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -127,7 +129,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','kimicode')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -180,6 +182,16 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
                 VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            // kimicode：Anthropic 入站，按目标行选上行协议，默认值与 Codex 相同
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('kimicode', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -577,6 +589,24 @@ impl Database {
                         }
                         Self::set_user_version(conn, 20)?;
                     }
+                    20 => {
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimicode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 21)?;
+                    }
+                    21 => {
+                        log::info!("迁移数据库从 v21 到 v22（Kimi Code 代理配置）");
+                        Self::migrate_v21_to_v22(conn)?;
+                        Self::set_user_version(conn, 22)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -908,7 +938,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','kimicode')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1470,7 +1500,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute(
             "CREATE TABLE proxy_config_v14 (
-                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild')),
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','kimicode')),
                 proxy_enabled INTEGER NOT NULL DEFAULT 0,
                 listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
                 listen_port INTEGER NOT NULL DEFAULT 15721,
@@ -1624,6 +1654,107 @@ impl Database {
                 "INTEGER",
             )?;
         }
+        Ok(())
+    }
+
+    /// v21 -> v22: allow Kimi Code to own an independent proxy configuration row.
+    /// Same table-rebuild shape as v13 -> v14 (SQLite cannot alter a CHECK constraint).
+    fn migrate_v21_to_v22(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+
+        conn.execute("DROP TABLE IF EXISTS proxy_config_v22", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE proxy_config_v22 (
+                app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','grokbuild','kimicode')),
+                proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                listen_port INTEGER NOT NULL DEFAULT 15721,
+                enable_logging INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 3,
+                streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                live_takeover_active INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let copied_columns = [
+            ("app_type", "'claude'"),
+            ("proxy_enabled", "0"),
+            ("listen_address", "'127.0.0.1'"),
+            ("listen_port", "15721"),
+            ("enable_logging", "1"),
+            ("enabled", "0"),
+            ("auto_failover_enabled", "0"),
+            ("max_retries", "3"),
+            ("streaming_first_byte_timeout", "60"),
+            ("streaming_idle_timeout", "120"),
+            ("non_streaming_timeout", "600"),
+            ("circuit_failure_threshold", "4"),
+            ("circuit_success_threshold", "2"),
+            ("circuit_timeout_seconds", "60"),
+            ("circuit_error_rate_threshold", "0.6"),
+            ("circuit_min_requests", "10"),
+            ("default_cost_multiplier", "'1'"),
+            ("pricing_model_source", "'response'"),
+            ("live_takeover_active", "0"),
+            ("created_at", "datetime('now')"),
+            ("updated_at", "datetime('now')"),
+        ]
+        .into_iter()
+        .map(|(column, fallback)| {
+            Self::has_column(conn, "proxy_config", column).map(|exists| {
+                if exists {
+                    format!("\"{column}\"")
+                } else {
+                    fallback.into()
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?
+        .join(", ");
+
+        let copy_sql = format!(
+            "INSERT INTO proxy_config_v22 (
+                app_type, proxy_enabled, listen_address, listen_port, enable_logging,
+                enabled, auto_failover_enabled, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests,
+                default_cost_multiplier, pricing_model_source, live_takeover_active,
+                created_at, updated_at
+            )
+            SELECT {copied_columns} FROM proxy_config"
+        );
+        conn.execute(&copy_sql, [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        conn.execute("DROP TABLE proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute("ALTER TABLE proxy_config_v22 RENAME TO proxy_config", [])
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type) VALUES ('kimicode')",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -3747,6 +3878,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrate_v21_to_v22_preserves_proxy_settings_and_seeds_kimicode() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE proxy_config (app_type TEXT PRIMARY KEY CHECK(app_type IN ('claude','codex','gemini','grokbuild')), listen_port INTEGER, max_retries INTEGER, default_cost_multiplier TEXT); INSERT INTO proxy_config VALUES ('codex', 23456, 7, '1.7');")?;
+        Database::set_user_version(&conn, 21)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, 22);
+        let saved: (i64, i64, String) = conn.query_row("SELECT listen_port, max_retries, default_cost_multiplier FROM proxy_config WHERE app_type='codex'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        assert_eq!(saved, (23456, 7, "1.7".into()));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM proxy_config WHERE app_type='kimicode'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            1
+        );
+        assert!(conn
+            .execute("INSERT INTO proxy_config (app_type) VALUES ('unknown')", [])
+            .is_err());
+        Database::migrate_v21_to_v22(&conn)?;
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r
+                .get::<_, i64>(0))?,
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
     fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
@@ -3835,6 +3995,44 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(values, (1, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v20_to_v21_adds_kimicode_flags_and_keeps_existing_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
+                enabled_pi BOOLEAN NOT NULL DEFAULT 0
+            );
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+                enabled_mcode BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers (id, enabled_codex, enabled_mcode, enabled_pi) VALUES ('mcp-1', 1, 1, 1);
+            INSERT INTO skills (id, enabled_codex, enabled_mcode) VALUES ('skill-1', 1, 1);",
+        )?;
+        Database::set_user_version(&conn, 20)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let mcp_values: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_mcode, enabled_pi, enabled_kimicode FROM mcp_servers WHERE id = 'mcp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(mcp_values, (1, 1, 1, 0));
+        let skill_values: (i64, i64, i64) = conn.query_row(
+            "SELECT enabled_codex, enabled_mcode, enabled_kimicode FROM skills WHERE id = 'skill-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(skill_values, (1, 1, 0));
         Ok(())
     }
 

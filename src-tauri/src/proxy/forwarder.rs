@@ -415,7 +415,7 @@ impl RequestForwarder {
         provider_body: &Value,
         error: &ProxyError,
     ) -> bool {
-        matches!(adapter_name, "Claude" | "Codex")
+        matches!(adapter_name, "Claude" | "Codex" | "Kimi")
             && self.rectifier_config.enabled
             && self.rectifier_config.request_media_fallback
             && !already_retried
@@ -1698,15 +1698,20 @@ impl RequestForwarder {
                 }
             }
         }
-        let resolved_claude_api_format = if adapter.name() == "Claude" {
-            Some(
+        let resolved_claude_api_format = match adapter.name() {
+            "Claude" => Some(
                 self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
                     .await,
-            )
-        } else {
-            None
+            ),
+            // Kimi Code 入站固定 Anthropic Messages，上行协议按目标行的 `type` 选。
+            "Kimi" if super::providers::kimi::managed_auth(provider) => Some(
+                self.resolve_claude_api_format(provider, &mapped_body, is_copilot)
+                    .await,
+            ),
+            "Kimi" => Some(super::providers::kimi_api_format(provider).to_string()),
+            _ => None,
         };
-        if adapter.name() == "Claude" {
+        if matches!(adapter.name(), "Claude" | "Kimi") {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
@@ -1739,7 +1744,7 @@ impl RequestForwarder {
                 rewrite_codex_responses_endpoint_to_chat(endpoint)
             } else if codex_responses_to_anthropic {
                 rewrite_codex_responses_endpoint_to_anthropic(endpoint)
-            } else if needs_transform && adapter.name() == "Claude" {
+            } else if needs_transform && matches!(adapter.name(), "Claude" | "Kimi") {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
@@ -1909,7 +1914,7 @@ impl RequestForwarder {
             );
             anthropic_body
         } else if needs_transform {
-            if adapter.name() == "Claude" {
+            if matches!(adapter.name(), "Claude" | "Kimi") {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
@@ -1964,6 +1969,14 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+        }
+
+        if matches!(app_type, AppType::KimiCode) && provider.is_codex_oauth() {
+            super::providers::kimi::apply_codex_reasoning_selection(
+                &mut request_body,
+                body,
+                provider,
+            );
         }
 
         // Native Responses passthrough to a strict third-party gateway (xAI).
@@ -2357,11 +2370,16 @@ impl RequestForwarder {
             }
         }
 
-        let should_send_anthropic_headers = adapter.name() == "Claude"
+        let should_send_anthropic_headers = matches!(adapter.name(), "Claude" | "Kimi")
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
         // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if should_send_anthropic_headers {
+        let anthropic_beta_value = if should_send_anthropic_headers && adapter.name() == "Kimi" {
+            headers
+                .get("anthropic-beta")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        } else if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
             Some(if let Some(beta) = headers.get("anthropic-beta") {
                 if let Ok(beta_str) = beta.to_str() {

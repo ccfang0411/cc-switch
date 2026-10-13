@@ -105,6 +105,7 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
   weekly_limit: 2,
   "30_day": 3,
   monthly: 3,
+  monthly_code: 4,
   credits: 3,
   premium: 3,
 };

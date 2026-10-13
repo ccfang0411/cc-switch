@@ -3,7 +3,7 @@
 //! 结构：问题区（出问题才有）→ 反馈行（托盘里刚做完要重启才生效的操作）→ 打开 CC Switch →
 //! 切换式应用的子菜单（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build；在「应用」页
 //! 隐藏的不列）→ 轻量模式 → 打开官方网站 / 退出 CC Switch。累加式应用（OpenCode / OpenClaw /
-//! Hermes / Pi / MiniMax Code）不进托盘；托盘里不切模式、不启停路由服务。
+//! Hermes / Pi / MiniMax Code / Kimi Code）不进托盘；托盘里不切模式、不启停路由服务。
 //!
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
@@ -55,6 +55,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Hermes => "Hermes",
         AppType::Pi => "Pi",
         AppType::Mcode => "MiniMax Code",
+        AppType::KimiCode => "Kimi Code",
     }
 }
 

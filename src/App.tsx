@@ -588,7 +588,7 @@ function App() {
   useEffect(() => {
     const checkEnvOnSwitch = async () => {
       try {
-        if (activeApp === "mcode") return;
+        if (activeApp === "mcode" || activeApp === "kimicode") return;
         const conflicts = await checkEnvConflicts(activeApp);
 
         if (conflicts.length > 0) {
@@ -836,6 +836,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "mcode"],
         });
+      } else if (activeApp === "kimicode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", "kimicode"],
+        });
       }
       toast.success(
         activeApp === "pi"
@@ -971,9 +975,9 @@ function App() {
         existingKeys,
       );
       duplicatedProvider.addToLive = false;
-    } else if (activeApp === "mcode") {
-      // The MCode list already includes its live custom nodes; the backend
-      // rejects a key that MCode itself owns.
+    } else if (activeApp === "mcode" || activeApp === "kimicode") {
+      // The MCode/Kimi Code list already includes its live custom nodes; the
+      // backend rejects a key that the app itself owns.
       duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
         provider.id,
         Object.keys(providers),
@@ -1177,6 +1181,7 @@ function App() {
         <>
           {currentView === "providers" &&
             activeApp !== "mcode" &&
+            activeApp !== "kimicode" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1272,6 +1277,12 @@ function App() {
     },
     onDelete: (provider: Provider) =>
       setConfirmAction({ provider, action: "delete" }),
+    // 进了模式栏的共存式应用（Kimi Code）：直连页「更多」菜单里的「从配置移除」
+    onRemoveFromConfig:
+      activeApp === "kimicode"
+        ? (provider: Provider) =>
+            setConfirmAction({ provider, action: "remove" })
+        : undefined,
     onDuplicate: handleDuplicateProvider,
     onConfigureUsage: setUsageProvider,
     onOpenWebsite: handleOpenWebsite,
@@ -1341,7 +1352,8 @@ function App() {
               activeApp === "openclaw" ||
               activeApp === "hermes" ||
               activeApp === "pi" ||
-              activeApp === "mcode"
+              activeApp === "mcode" ||
+              activeApp === "kimicode"
                 ? (provider) => setConfirmAction({ provider, action: "remove" })
                 : undefined
             }

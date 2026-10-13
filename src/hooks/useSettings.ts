@@ -122,6 +122,7 @@ export function useSettings(): UseSettingsResult {
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
       pi: sanitizeDir(data?.piConfigDir),
+      kimicode: sanitizeDir(data?.kimicodeConfigDir),
     });
     setRequiresRestart(false);
   }, [
@@ -204,6 +205,9 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedKimicodeDir = sanitizeDir(
+          mergedSettings.kimicodeConfigDir,
+        );
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -219,6 +223,7 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          kimicodeConfigDir: sanitizedKimicodeDir,
           language: mergedSettings.language,
         };
 
@@ -339,6 +344,9 @@ export function useSettings(): UseSettingsResult {
           mergedSettings.openclawConfigDir,
         );
         const sanitizedPiDir = sanitizeDir(mergedSettings.piConfigDir);
+        const sanitizedKimicodeDir = sanitizeDir(
+          mergedSettings.kimicodeConfigDir,
+        );
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
@@ -347,6 +355,7 @@ export function useSettings(): UseSettingsResult {
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
         const previousPiDir = sanitizeDir(data?.piConfigDir);
+        const previousKimicodeDir = sanitizeDir(data?.kimicodeConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -362,6 +371,7 @@ export function useSettings(): UseSettingsResult {
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
           piConfigDir: sanitizedPiDir,
+          kimicodeConfigDir: sanitizedKimicodeDir,
           language: mergedSettings.language,
         };
 
@@ -452,6 +462,7 @@ export function useSettings(): UseSettingsResult {
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         const piDirChanged = sanitizedPiDir !== previousPiDir;
+        const kimicodeDirChanged = sanitizedKimicodeDir !== previousKimicodeDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
@@ -459,7 +470,8 @@ export function useSettings(): UseSettingsResult {
             geminiDirChanged ||
             grokDirChanged ||
             opencodeDirChanged ||
-            openclawDirChanged)
+            openclawDirChanged ||
+            kimicodeDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
@@ -471,6 +483,11 @@ export function useSettings(): UseSettingsResult {
         }
         if (piDirChanged) {
           await invalidatePiDirectoryCaches(queryClient);
+        }
+        if (kimicodeDirChanged) {
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", "kimicode"],
+          });
         }
 
         const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);

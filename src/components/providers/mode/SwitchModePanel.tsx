@@ -44,6 +44,7 @@ type ListCallbacks = Pick<
   | "onEdit"
   | "onDelete"
   | "onDuplicate"
+  | "onRemoveFromConfig"
   | "onConfigureUsage"
   | "onOpenWebsite"
   | "onOpenTerminal"

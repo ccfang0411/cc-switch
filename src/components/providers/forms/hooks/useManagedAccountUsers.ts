@@ -16,6 +16,7 @@ export function useManagedAccountUsers(
   const { data: claude } = useProvidersQuery("claude");
   const { data: desktop } = useProvidersQuery("claude-desktop");
   const { data: codex } = useProvidersQuery("codex");
+  const { data: kimi } = useProvidersQuery("kimicode");
 
   return useCallback(
     (accountIds: readonly string[]): ManagedAccountUser[] =>
@@ -23,7 +24,8 @@ export function useManagedAccountUsers(
         claude: claude?.providers,
         "claude-desktop": desktop?.providers,
         codex: codex?.providers,
+        kimicode: kimi?.providers,
       }),
-    [authProvider, defaultAccountId, claude, desktop, codex],
+    [authProvider, defaultAccountId, claude, desktop, codex, kimi],
   );
 }

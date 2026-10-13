@@ -67,18 +67,10 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
-/// 检查更新
+/// This compatibility endpoint cannot open an upstream update page.
 #[tauri::command]
-pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
-    handle
-        .opener()
-        .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
-            None::<String>,
-        )
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
-
-    Ok(true)
+pub async fn check_for_updates(_handle: AppHandle) -> Result<bool, String> {
+    Err("Application updates are disabled in this independent branch".into())
 }
 
 /// 判断是否为便携版（绿色版）运行
@@ -128,8 +120,9 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 9] = [
+const VALID_TOOLS: [&str; 10] = [
     "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "mcode",
+    "kimicode",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -514,6 +507,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "hermes" => "Hermes",
         "pi" => "Pi",
         "mcode" => "MiniMax Code",
+        "kimicode" => "Kimi Code",
         _ => "Unknown",
     }
 }
@@ -731,6 +725,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "mcode" => Some(
             "npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
         ),
+        "kimicode" => Some(
+            "npm i -g @moonshot-ai/kimi-code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@moonshot-ai/kimi-code,node-pty\"",
+        ),
         _ => None,
     }
 }
@@ -743,6 +740,8 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 /// MiniMax Code 依赖 better-sqlite3 的安装脚本：npm 12 默认拦截依赖的 install 脚本，
 /// 只放行 `--allow-scripts` 列出的包（按注册表包名匹配），被拦后 SQLite 不可用；
 /// `--ignore-scripts=false` / `--include=optional` 抵消用户 npmrc 里的相反设置。
+/// Kimi Code 同理：自身 postinstall 安装平台二进制，optional dependency node-pty
+/// 的 install 脚本被拦后 PTY 功能不可用。
 /// npm 10/11 上这串参数无副作用（实测 exit 0、脚本照常执行）。整段 `--allow-scripts=…`
 /// 加双引号：逗号在 PowerShell 里会被当成数组分隔符，bash/cmd 都会剥掉这层引号。
 fn npm_install_extra_args(tool: &str) -> &'static str {
@@ -753,6 +752,9 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
         "mcode" => {
             " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""
         }
+        "kimicode" => {
+            " --ignore-scripts=false --include=optional \"--allow-scripts=@moonshot-ai/kimi-code,node-pty\""
+        }
         _ => "",
     }
 }
@@ -760,6 +762,8 @@ fn npm_install_extra_args(tool: &str) -> &'static str {
 // MiniMax Code 虽有 `mcode update`，却刻意不列在这里：它在 stdin/stdout 非 TTY 时只打印
 // "No interactive confirmation is available" 就 exit 0、并不安装。静默 lifecycle 的
 // `cmd.output()` 正是非 TTY，放进来会让 `mcode update || <fallback>` 的兜底永不触发。
+// Kimi Code 的 `kimi upgrade` 同理不列：它的二进制名是 `kimi`（与工具 id `kimicode`
+// 不同），且非 TTY 行为未验证——升级一律走锚定的 npm 命令。
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "grok" | "hermes" => Some("update"),
@@ -1100,6 +1104,9 @@ async fn get_single_tool_version_impl(
             fetch_npm_latest_for_tool(&client, "@earendil-works/pi-coding-agent", tool, local).await
         }
         "mcode" => fetch_npm_latest_for_tool(&client, "@minimax-ai/code", tool, local).await,
+        "kimicode" => {
+            fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await
+        }
         _ => None,
     };
 
@@ -1932,7 +1939,34 @@ fn mcode_extra_search_paths(
     paths
 }
 
+/// Kimi Code 官方 postinstall 把平台原生二进制放进数据目录的 `bin/`（如
+/// `~/.kimi-code/bin/kimi`），数据目录可由 `KIMI_CODE_HOME` 改。它只改 shell rc /
+/// 用户 PATH，GUI 进程继承的旧 PATH 看不到，所以同 Grok 一样显式排在通用
+/// npm/Node 目录前面。
+fn kimicode_extra_search_paths(
+    home: &Path,
+    kimi_code_home: Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(root) = kimi_code_home.filter(|value| !value.is_empty()) {
+        push_unique_path(&mut paths, std::path::PathBuf::from(root).join("bin"));
+    }
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, home.join(".kimi-code").join("bin"));
+    }
+    paths
+}
+
+/// 工具 id 对应的可执行文件名（Kimi Code 的 npm 包 `@moonshot-ai/kimi-code` 的 bin 是 `kimi`）。
+fn tool_binary_name(tool: &str) -> &str {
+    match tool {
+        "kimicode" => "kimi",
+        _ => tool,
+    }
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
+    let tool = tool_binary_name(tool);
     #[cfg(target_os = "windows")]
     {
         let extensionless = dir.join(tool);
@@ -2118,6 +2152,12 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     }
     if tool == "mcode" {
         let extra_paths = mcode_extra_search_paths(&home, std::env::var_os("MCODE_INSTALL_DIR"));
+        for path in extra_paths {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
+    if tool == "kimicode" {
+        let extra_paths = kimicode_extra_search_paths(&home, std::env::var_os("KIMI_CODE_HOME"));
         for path in extra_paths {
             push_unique_path(&mut search_paths, path);
         }
@@ -2893,6 +2933,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "openclaw" => Some("openclaw"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
         "mcode" => Some("@minimax-ai/code"),
+        "kimicode" => Some("@moonshot-ai/kimi-code"),
         _ => None,
     }
 }
@@ -6012,6 +6053,58 @@ mod tests {
                 Some(npm)
             );
         }
+    }
+
+    #[test]
+    fn kimicode_lifecycle_metadata_uses_scoped_package_and_kimi_binary() {
+        let requested = vec!["unsupported".to_string(), "kimicode".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["kimicode"]);
+        assert_eq!(tool_display_name("kimicode"), "Kimi Code");
+        // 官方包是 scoped 的 @moonshot-ai/kimi-code，bin 名为 `kimi`。
+        assert_eq!(npm_package_for("kimicode"), Some("@moonshot-ai/kimi-code"));
+        let npm = npm_install_command_for("kimicode").unwrap();
+        assert_eq!(
+            npm,
+            format!(
+                "npm i -g @moonshot-ai/kimi-code@latest{}",
+                npm_install_extra_args("kimicode")
+            )
+        );
+        assert!(
+            npm.contains("\"--allow-scripts=@moonshot-ai/kimi-code,node-pty\""),
+            "npm 12 blocks the postinstall and node-pty install scripts without it: {npm}"
+        );
+
+        // `kimi upgrade` 的非 TTY 行为未验证，升级一律走 npm。
+        assert_eq!(official_update_args("kimicode"), None);
+        for shell in [
+            LifecycleCommandShell::Posix,
+            LifecycleCommandShell::WindowsBatch,
+        ] {
+            assert_eq!(
+                tool_action_shell_command_for_shell("kimicode", ToolLifecycleAction::Update, shell)
+                    .as_deref(),
+                Some(npm)
+            );
+        }
+        assert_eq!(tool_binary_name("kimicode"), "kimi");
+        assert_eq!(tool_binary_name("mcode"), "mcode");
+    }
+
+    #[test]
+    fn kimicode_extra_search_paths_use_data_dir_bin() {
+        let home = PathBuf::from("/home/tester");
+        let paths =
+            kimicode_extra_search_paths(&home, Some(std::ffi::OsString::from("/data/kimi")));
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("/data/kimi/bin"),
+                PathBuf::from("/home/tester/.kimi-code/bin"),
+            ]
+        );
+        let paths = kimicode_extra_search_paths(&home, Some(std::ffi::OsString::new()));
+        assert_eq!(paths, vec![PathBuf::from("/home/tester/.kimi-code/bin")]);
     }
 
     #[test]

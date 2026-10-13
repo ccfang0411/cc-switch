@@ -9,6 +9,7 @@ export const MANAGED_ACCOUNT_APPS = [
   "claude",
   "claude-desktop",
   "codex",
+  "kimicode",
 ] as const;
 
 export type ManagedAccountApp = (typeof MANAGED_ACCOUNT_APPS)[number];

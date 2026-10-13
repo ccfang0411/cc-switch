@@ -279,7 +279,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: grokConfig.apiKey,
             baseUrl: grokConfig.baseUrl,
           };
-        } else if (appId === "hermes") {
+        } else if (appId === "hermes" || appId === "kimicode") {
           // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
           return {
             apiKey: (config as any).api_key,

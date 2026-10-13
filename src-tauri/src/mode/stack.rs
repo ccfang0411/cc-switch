@@ -46,7 +46,7 @@ pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
 /// 支持 Stack 模型的应用。
 pub fn supports_stack(app: &AppType) -> bool {
-    matches!(app, AppType::Claude | AppType::Codex)
+    matches!(app, AppType::Claude | AppType::Codex | AppType::KimiCode)
 }
 
 /// 给 `provider` 一个 key：登记过就用原来的（移除后重新加入，旧会话里的 id 继续有效），
@@ -102,6 +102,7 @@ fn slug(text: &str) -> String {
 /// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算。
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
+        AppType::KimiCode => format!("ccs-kimi-{key}--{model}"),
         AppType::Codex => format!("{CODEX_PREFIX}{key}{CODEX_SEPARATOR}{model}"),
         _ => {
             let marker = if one_m { ONE_M_MARKER_FOR_CLIENT } else { "" };
@@ -144,6 +145,12 @@ pub fn decode<'a>(app: &AppType, id: &'a str) -> Decoded<'a> {
                 return Decoded::Plain;
             }
             (rest, "/", false)
+        }
+        AppType::KimiCode => {
+            let Some(rest) = id.strip_prefix("ccs-kimi-") else {
+                return Decoded::Plain;
+            };
+            (rest, "--", false)
         }
         _ => return Decoded::Plain,
     };
@@ -320,6 +327,13 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
 
 /// Codex 行发布的模型 id：行里的模型目录，没有配置目录时只有行的 `model`。显示名和窗口
 /// 由目录条目决定（`codex_config::plan_codex_stack_catalog`）。
+pub fn kimi_model_ids(key: &str, provider: &Provider) -> Vec<String> {
+    crate::live::project::kimi::KimiModel::all_of(&provider.settings_config)
+        .into_iter()
+        .map(|model| encode(&AppType::KimiCode, key, &model.alias, false))
+        .collect()
+}
+
 pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
     let config = provider
         .settings_config
@@ -366,6 +380,7 @@ fn model_ids_of(app: &AppType, key: &str, provider: &Provider, route: bool) -> V
             .into_iter()
             .map(|model| model.id)
             .collect(),
+        AppType::KimiCode => kimi_model_ids(key, provider),
         AppType::Codex if !route => codex_model_ids(key, provider),
         _ => Vec::new(),
     }
@@ -574,6 +589,12 @@ pub fn resolve(
     // Claude 发往上游的是行里配置的原值（可能带 1M 标记），和路由请求映射出来的一样；
     // 行里已经没有这个模型时照原样发（上游自己决定认不认）。Codex 的 id 就是行里的模型名。
     let upstream_model = match app {
+        AppType::KimiCode => {
+            crate::live::project::kimi::KimiModel::all_of(&provider.settings_config)
+                .into_iter()
+                .find(|model| model.alias == model_part)
+                .map(|model| model.upstream)
+        }
         AppType::Claude => claude_models(key, &provider)
             .into_iter()
             .find(|published| {
@@ -661,6 +682,28 @@ mod tests {
         );
         provider.icon = icon.map(str::to_string);
         provider
+    }
+
+    #[test]
+    fn kimi_stack_aliases_round_trip_and_slashes_use_native_alias() {
+        let app = AppType::KimiCode;
+        for model in ["k3", "model--variant"] {
+            let id = encode(&app, "vendor", model, false);
+            assert_eq!(id, format!("ccs-kimi-vendor--{model}"));
+            assert_eq!(
+                decode(&app, &id),
+                Decoded::Stack {
+                    key: "vendor",
+                    model,
+                    one_m: false
+                }
+            );
+        }
+        assert_eq!(decode(&app, "ccs-kimi-broken"), Decoded::Malformed);
+        assert_eq!(decode(&app, "ccs-kimi---m"), Decoded::Malformed);
+        let mut row = provider("p", "P", None, json!({}));
+        row.settings_config = json!({"model":{"model":"vendor/model", "alias":"friendly"}});
+        assert_eq!(kimi_model_ids("p", &row), vec!["ccs-kimi-p--friendly"]);
     }
 
     #[test]

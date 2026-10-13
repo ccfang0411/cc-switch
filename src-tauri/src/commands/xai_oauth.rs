@@ -128,6 +128,7 @@ pub async fn get_xai_oauth_models(
         .map(|model| FetchedModel {
             id: model.id,
             owned_by: model.owned_by,
+            ..Default::default()
         })
         .collect();
     models.sort_by(|a, b| a.id.cmp(&b.id));

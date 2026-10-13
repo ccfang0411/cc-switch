@@ -16,6 +16,7 @@ pub(crate) mod gemini_direct;
 mod gemini_editor;
 pub(crate) mod grok_direct;
 mod grok_editor;
+pub(crate) mod kimi_direct;
 mod live;
 #[cfg(test)]
 mod opencode_tests;
@@ -5441,6 +5442,44 @@ impl ProviderService {
             }
             return Ok(saved);
         }
+        if app_type == AppType::KimiCode {
+            if crate::mode::current::is_proxy(&app_type) {
+                let mut saved = state.db.get_all_providers("kimicode")?;
+                for provider in saved.values_mut() {
+                    if provider.ensure_kimi_subscription_usage() {
+                        state.db.save_provider("kimicode", provider)?;
+                    }
+                }
+                return Ok(saved);
+            }
+            let native = crate::kimi_config::get_providers()?;
+            let mut saved = state.db.get_all_providers("kimicode")?;
+            for (id, config) in &native {
+                if !saved.contains_key(id) {
+                    let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
+                    saved.insert(
+                        id.clone(),
+                        Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                    );
+                }
+            }
+            for (id, provider) in &mut saved {
+                if crate::proxy::providers::kimi::managed_auth(provider) {
+                    Self::set_provider_live_config_managed(provider, false);
+                    continue;
+                }
+                if let Some(config) = native.get(id) {
+                    if let Some(name) = config.get("name").and_then(Value::as_str) {
+                        provider.name = name.into();
+                    }
+                    provider.settings_config = config.clone();
+                }
+                provider.ensure_kimi_subscription_usage();
+                Self::set_provider_live_config_managed(provider, native.contains_key(id));
+                state.db.save_provider("kimicode", provider)?;
+            }
+            return Ok(saved);
+        }
         state.db.get_all_providers(app_type.as_str())
     }
 
@@ -5453,7 +5492,7 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
         // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
+        if app_type.is_additive_mode() && app_type != AppType::KimiCode {
             return Ok(String::new());
         }
         // 代理模式下界面上的「当前」是代理路由到的那家。
@@ -5491,6 +5530,61 @@ impl ProviderService {
         Ok(true)
     }
 
+    fn save_kimicode_provider(
+        state: &AppState,
+        provider: &Provider,
+        write_live: bool,
+        create: bool,
+    ) -> Result<bool, AppError> {
+        let managed_auth = crate::proxy::providers::kimi::managed_auth(provider);
+        let write_live = write_live && !managed_auth;
+        let mut provider = provider.clone();
+        if managed_auth {
+            Self::set_provider_live_config_managed(&mut provider, false);
+        }
+        let provider = &provider;
+        let previous = state.db.get_provider_by_id(&provider.id, "kimicode")?;
+        state.db.save_provider("kimicode", provider)?;
+        if write_live {
+            let config = provider.settings_config.clone();
+            let written = if crate::mode::current::is_proxy(&AppType::KimiCode) {
+                Ok(())
+            } else if create {
+                crate::kimi_config::add_provider(&provider.id, config)
+            } else {
+                crate::kimi_config::set_provider(&provider.id, config)
+            };
+            if let Err(error) = written {
+                match previous {
+                    Some(previous) => state.db.save_provider("kimicode", &previous)?,
+                    None => state.db.delete_provider("kimicode", &provider.id)?,
+                }
+                return Err(error);
+            }
+        }
+        if write_live && !crate::mode::current::is_proxy(&AppType::KimiCode) {
+            crate::settings::set_current_provider(&AppType::KimiCode, Some(&provider.id))?;
+        }
+        if crate::mode::current::is_proxy(&AppType::KimiCode) {
+            if let Err(error) =
+                futures::executor::block_on(crate::mode::controller::resync_saved_row_locked(
+                    state,
+                    &AppType::KimiCode,
+                    provider,
+                ))
+            {
+                if !crate::mode::operation::has_pending("kimicode") {
+                    match previous {
+                        Some(ref row) => state.db.save_provider("kimicode", row)?,
+                        None => state.db.delete_provider("kimicode", &provider.id)?,
+                    }
+                }
+                return Err(AppError::Message(error));
+            }
+        }
+        Ok(true)
+    }
+
     /// Add a new provider
     pub fn add(
         state: &AppState,
@@ -5507,6 +5601,9 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -5536,6 +5633,24 @@ impl ProviderService {
                 )));
             }
             return Self::save_mcode_provider(state, &provider, add_to_live, true);
+        }
+
+        if app_type == AppType::KimiCode {
+            // The key is user-chosen, and saving would overwrite an existing row or live node.
+            // Adds are serialized here; the live write repeats the check under Kimi Code's file lock.
+            let _guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+            if state
+                .db
+                .get_provider_by_id(&provider.id, "kimicode")?
+                .is_some()
+                || crate::kimi_config::provider_key_exists(&provider.id)?
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "Kimi Code provider key '{}' already exists",
+                    provider.id
+                )));
+            }
+            return Self::save_kimicode_provider(state, &provider, add_to_live, true);
         }
 
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
@@ -5687,6 +5802,10 @@ impl ProviderService {
             }
             AppType::Gemini => gemini_editor::view(state, settings_config, category),
             AppType::GrokBuild => grok_editor::view(state, settings_config, category),
+            AppType::KimiCode => Ok(EditorView {
+                settings: settings_config.clone(),
+                inactive: vec![],
+            }),
             other => Err(AppError::InvalidInput(format!(
                 "{} 的编辑器还不支持按关键字段显示",
                 other.as_str()
@@ -5817,6 +5936,9 @@ impl ProviderService {
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
         if kind == EditorSaveKind::Add {
             keep_common_config_for_old_versions(&mut provider);
         }
@@ -5891,6 +6013,9 @@ impl ProviderService {
         };
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
         if kind == EditorSaveKind::Add && matches!(app_type, AppType::Gemini) {
             keep_common_config_for_old_versions(&mut provider);
         }
@@ -5974,6 +6099,9 @@ impl ProviderService {
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
         keep_common_config_for_old_versions(&mut provider);
 
         let existing = state
@@ -6019,6 +6147,9 @@ impl ProviderService {
         provider.settings_config = plan.row_settings.clone();
         Self::validate_provider_settings(&app_type, &provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
 
         let mode = crate::mode::current::mode_state(&app_type);
         // 代理模式下 live 的关键字段是代理契约，这里只写全局改动；编辑的是代理路由那家
@@ -6069,8 +6200,16 @@ impl ProviderService {
             )?;
         }
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+        if app_type == AppType::KimiCode {
+            provider.ensure_kimi_subscription_usage();
+        }
 
         if provider_id_changed {
+            if app_type == AppType::KimiCode && crate::mode::current::is_proxy(&app_type) {
+                return Err(AppError::InvalidInput(
+                    "请先退出路由或聚合模式，再修改供应商键".into(),
+                ));
+            }
             if !app_type.is_additive_mode() {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
@@ -6193,6 +6332,10 @@ impl ProviderService {
 
             if app_type == AppType::Mcode {
                 return Self::save_mcode_provider(state, &provider, live_config_managed, false);
+            }
+
+            if app_type == AppType::KimiCode {
+                return Self::save_kimicode_provider(state, &provider, live_config_managed, false);
             }
 
             // Save to database after live-config presence is resolved so parse errors
@@ -6321,6 +6464,19 @@ impl ProviderService {
             return pi::delete(state, id);
         }
 
+        if app_type == AppType::KimiCode && crate::mode::current::is_proxy(&app_type) {
+            if crate::mode::current::is_referenced(&state.db, &app_type, id)? {
+                return Err(AppError::Message(
+                    "请先切换直连或路由供应商，再删除当前供应商".into(),
+                ));
+            }
+            if crate::mode::stack::is_member(&app_type, id)? {
+                futures::executor::block_on(crate::mode::controller::set_stack_member(
+                    state, &app_type, id, false,
+                ))
+                .map_err(|e| AppError::Message(e.message))?;
+            }
+        }
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
@@ -6363,6 +6519,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+                    AppType::KimiCode => crate::kimi_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6439,6 +6596,7 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
+            AppType::KimiCode => crate::kimi_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -6594,6 +6752,21 @@ impl ProviderService {
             gemini_direct::switch_to(state.db.as_ref(), provider)?;
             return Ok(SwitchResult::default());
         }
+        if matches!(app_type, AppType::KimiCode) {
+            if crate::proxy::providers::kimi::managed_auth(provider) {
+                return Err(AppError::Message(
+                    "Kimi Code 账号登录供应商需要开启本地路由".into(),
+                ));
+            }
+            let projection = crate::live::project::kimi::KimiProjection::direct(Some(provider))?;
+            kimi_direct::run(
+                &state.db,
+                crate::mode::state::op::SWITCH,
+                Some(&projection),
+                crate::mode::state::PendingTarget::pointer(Some(id.to_string())),
+            )?;
+            return Ok(SwitchResult::default());
+        }
         if matches!(app_type, AppType::GrokBuild) {
             return Self::switch_grok_direct(state, provider, providers);
         }
@@ -6663,6 +6836,7 @@ impl ProviderService {
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
+                    AppType::KimiCode => crate::kimi_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -6908,7 +7082,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::KimiCode => Ok(String::new()),
         }
     }
 
@@ -6926,7 +7100,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Pi | AppType::Mcode => Ok(String::new()),
+            AppType::Pi | AppType::Mcode | AppType::KimiCode => Ok(String::new()),
         }
     }
 
@@ -7690,6 +7864,9 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
+            AppType::KimiCode => {
+                crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
@@ -7909,6 +8086,30 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                Ok((api_key, base_url))
+            }
+            AppType::KimiCode => {
+                // Kimi Code's config.toml fields are snake_case on the provider object.
+                let api_key = provider
+                    .settings_config
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.kimicode.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+
+                let base_url = provider
+                    .settings_config
+                    .get("base_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   codexPresetModelSources,
   hermesPresetModelSources,
+  kimicodePresetModelSources,
   mcodePresetModelSources,
   openclawPresetModelSources,
   opencodePresetModelSources,
@@ -34,6 +35,7 @@ describe("preset model metadata sources", () => {
     ["hermes", hermesPresetModelSources],
     ["opencode", opencodePresetModelSources],
     ["mcode", mcodePresetModelSources],
+    ["kimicode", kimicodePresetModelSources],
     ["pi", piPresetModelSources],
   ])("collects reviewed model values from %s presets", (_app, sources) => {
     const list = sources();

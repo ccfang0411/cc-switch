@@ -29,7 +29,11 @@ export interface CodingPlanProviderEntry {
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
+  {
+    id: "kimi",
+    label: "Kimi For Coding",
+    pattern: /^https?:\/\/api\.kimi\.(?:com|ai)\/coding(?:\/|$)/i,
+  },
   {
     id: "zhipu",
     label: "Zhipu GLM (智谱)",
@@ -124,6 +128,9 @@ export function extractBaseUrlForUsageDetection(
     case "opencode":
       raw = settingsConfig.options?.baseURL;
       break;
+    case "kimicode":
+      raw = settingsConfig.base_url;
+      break;
     case "pi":
       raw = settingsConfig.baseUrl;
       break;
@@ -161,7 +168,10 @@ export function injectCodingPlanUsageScript<
   if (!codingPlanProvider) return provider;
   const isCommandCodeForCodex =
     appId === "codex" && codingPlanProvider === "command_code";
+  const isKimiCodeSubscription =
+    appId === "kimicode" && codingPlanProvider === "kimi";
   if (
+    !isKimiCodeSubscription &&
     appId !== "claude" &&
     codingPlanProvider !== "opencode_go" &&
     !isCommandCodeForCodex

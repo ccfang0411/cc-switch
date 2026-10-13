@@ -54,6 +54,7 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   weekly_limit: "subscription.sevenDay",
   // 火山方舟 Agent Plan / Coding Plan 的月窗口
   monthly: "subscription.monthly",
+  monthly_code: "subscription.monthlyCode",
   // Grok credit 额度的兜底窗口（重置距离可识别时归入 weekly_limit/monthly）
   credits: "subscription.credits",
   // GitHub Copilot

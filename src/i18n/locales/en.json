@@ -372,6 +372,7 @@
     }
   },
   "settings": {
+    "branchUpdatesDisabled": "Independent branch · App updates disabled",
     "title": "Settings",
     "general": {
       "appearance": "Appearance",
@@ -904,6 +905,8 @@
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
     "piConfigDir": "Pi Configuration Directory",
     "piConfigDirDescription": "Override the Pi configuration directory (models.json, instruction files, prompts, skills, and sessions).",
+    "kimicodeConfigDir": "Kimi Code Configuration Directory",
+    "kimicodeConfigDirDescription": "Override the Kimi Code directory (config.toml, prompts, and skills). Set KIMI_CODE_HOME to the same path when launching Kimi CLI.",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -912,6 +915,7 @@
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
+    "browsePlaceholderKimicode": "e.g., /home/<your-username>/.kimi-code",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1044,12 +1048,36 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "kimicode": "Kimi Code"
   },
   "mcode": {
     "empty": {
       "title": "No custom providers yet",
       "description": "Your MiniMax account sign-in is managed by MiniMax Code itself, so there is nothing to import. Custom providers already in config.yaml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    }
+  },
+  "kimicode": {
+    "empty": {
+      "title": "No custom providers yet",
+      "description": "Your Kimi account sign-in is managed by Kimi Code itself, so there is nothing to import. Custom providers already in config.toml appear here automatically. Use the + button in the top-right corner to add a preset or custom provider."
+    },
+    "form": {
+      "addModel": "Add model",
+      "manualModelId": "Add a model ID manually",
+      "modelDefault": "Use model default",
+      "effortForModel": "Reasoning effort for {{model}}",
+      "reasoningEffort": "Default reasoning effort",
+      "officialContext": "Context window reported by the model catalog: {{count}}",
+      "removeModel": "Remove {{model}}",
+      "setDefaultModel": "Set as default",
+      "defaultModel": "Default model",
+      "searchModels": "Search models",
+      "chooseModels": "Select models to add",
+      "codexModelsHint": "Fetch models, context windows, and reasoning levels from the selected ChatGPT account. Select models to add and choose a default.",
+      "providerTypeHint": "The provider protocol (type) Kimi Code uses for this endpoint.",
+      "capabilities": "Capabilities",
+      "capabilitiesHint": "Comma-separated model capabilities, e.g. thinking, image_in, tool_use."
     }
   },
   "pi": {
@@ -1283,6 +1311,7 @@
     "deleteSessionEllipsis": "Delete sessions",
     "deleteEllipsis": "Delete",
     "selectSessionLabel": "Select {{title}}",
+    "kimicodeDeleteHint": "Delete this session in Kimi Code",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
@@ -2157,6 +2186,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "kimicode": "Kimi Code",
       "label": "Filter by app"
     },
     "rawInputLabel": "Raw",
@@ -2536,6 +2566,7 @@
     "tip3": "• Entire config must be wrapped in () to form object literal expression"
   },
   "dbUpgrade": {
+    "branchRecovery": "App updates are disabled in this independent branch. Back up your database, then manually install a compatible branch build or restore a compatible database backup.",
     "title": "Database version is too new",
     "description": "This database was created by a newer version of CC Switch. Upgrade the app to continue. Upgrading will not delete your data.",
     "versionInfo": "Database v{{db}} · App supports v{{supported}}",
@@ -2596,7 +2627,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "kimicode": "Kimi Code"
       }
     },
     "userLevelPath": "User-level MCP path",
@@ -3961,6 +3993,7 @@
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
       "monthly": "Mo",
+      "monthlyCode": "Monthly code quota",
       "credits": "Credits",
       "copilotPremium": "Premium"
     },
@@ -3975,6 +4008,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
+    "monthlyCode": "Monthly code quota",
     "credits": "Credits",
     "copilotPremium": "Premium",
     "utilization": "{{value}}%",
@@ -4043,7 +4077,8 @@
       "openclaw": "Installs with npm",
       "hermes": "Installs with the official script",
       "pi": "Installs with npm",
-      "mcode": "Installs with the official script, falls back to npm"
+      "mcode": "Installs with the official script, falls back to npm",
+      "kimicode": "Installs with npm"
     }
   },
   "appPage": {
@@ -4120,6 +4155,7 @@
       "stackNoteEmpty": "No other providers added yet, so only the default is available. You can add more on the Aggregation tab later.",
       "stackNoteNoFailover": "Aggregation has no failover. The queue and its settings are kept and come back with routing.",
       "stackNoteRestartCodex": "Restart {{app}} to see the aggregated models; quit the desktop app completely and reopen it.",
+      "stackNoteRestartApp": "Restart {{app}} to see the aggregated models.",
       "stackToRouteNote": "Aggregated models are withdrawn from /model (the list is kept); a selected aggregated model must be changed back to a regular one.",
       "confirmRoute": "Start routing",
       "confirmStack": "Switch to Aggregation",
@@ -4463,7 +4499,7 @@
       "jsonMaskedUnknown": "\"{{key}}\" still holds the placeholder, but the draft has no original value for that key. Enter the real value, or turn on \"Show values\" before renaming keys.",
       "writeTo": "Write to",
       "writeToHelpTitle": "How it's written to apps",
-      "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code only replaces the connection fields; other fields in mcp.json are kept.",
+      "writeToHelp": "The same config is written as-is to every ticked app; if one app needs different arguments, create a separate entry for it. MiniMax Code and Kimi Code only replace the connection fields; other fields in each app's mcp.json are kept.",
       "meta": "Description & links",
       "metaHint": "Display name, description, tags, homepage, docs",
       "displayName": "Display name",

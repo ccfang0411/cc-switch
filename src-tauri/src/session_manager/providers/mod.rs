@@ -13,3 +13,5 @@ mod pi_blocks;
 mod utils;
 
 pub mod mcode;
+
+pub mod kimicode;

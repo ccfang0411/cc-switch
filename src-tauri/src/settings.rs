@@ -50,6 +50,8 @@ pub struct VisibleApps {
     pub pi: bool,
     #[serde(default = "default_true")]
     pub mcode: bool,
+    #[serde(default = "default_true")]
+    pub kimicode: bool,
 }
 
 impl Default for VisibleApps {
@@ -65,6 +67,7 @@ impl Default for VisibleApps {
             hermes: false, // 默认不显示，需用户手动启用
             pi: true,
             mcode: true,
+            kimicode: true,
         }
     }
 }
@@ -83,6 +86,7 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
+            AppType::KimiCode => self.kimicode,
         }
     }
 }
@@ -464,6 +468,8 @@ pub struct AppSettings {
     pub hermes_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kimicode_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -490,6 +496,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 Kimi Code 供应商 ID（本地存储；直连切换和代理模式指针都按它）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_kimicode: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -591,6 +600,7 @@ impl Default for AppSettings {
             openclaw_config_dir: None,
             hermes_config_dir: None,
             pi_config_dir: None,
+            kimicode_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -599,6 +609,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_kimicode: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -680,6 +691,13 @@ impl AppSettings {
 
         self.pi_config_dir = self
             .pi_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.kimicode_config_dir = self
+            .kimicode_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -1041,6 +1059,14 @@ pub fn get_pi_override_dir() -> Option<PathBuf> {
         .map(|path| resolve_override_path(path))
 }
 
+pub fn get_kimicode_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .kimicode_config_dir
+        .as_ref()
+        .map(|path| resolve_override_path(path))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -1088,6 +1114,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::KimiCode => settings.current_provider_kimicode.clone(),
         AppType::Pi | AppType::Mcode => None,
     }
 }
@@ -1107,6 +1134,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::KimiCode => settings.current_provider_kimicode = id_owned.clone(),
         AppType::Pi | AppType::Mcode => {}
     })
 }
@@ -1144,6 +1172,13 @@ pub fn get_effective_current_provider(
         let _ = set_current_provider(app_type, None);
     }
 
+    if matches!(app_type, AppType::KimiCode) {
+        if let Some(id) = crate::kimi_config::default_provider_id() {
+            if db.get_provider_by_id(&id, app_type.as_str())?.is_some() {
+                return Ok(Some(id));
+            }
+        }
+    }
     // Fallback 到数据库的 is_current
     db.get_current_provider(app_type.as_str())
 }

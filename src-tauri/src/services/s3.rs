@@ -57,10 +57,30 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
     }
 }
 
+/// OSS S3 compatibility accepts only virtual-hosted requests. Detect the actual
+/// hostname, rather than a substring, so custom gateways keep their path style.
+fn oss_bucket_origin(creds: &S3Credentials) -> Option<String> {
+    let (scheme, host) = split_scheme_host(&creds.endpoint);
+    let mut url = Url::parse(&format!("{scheme}://{host}")).ok()?;
+    let domain = url.host_str()?;
+    let regional = domain
+        .strip_suffix(".aliyuncs.com")
+        .or_else(|| domain.strip_suffix(".aliyuncs.com.cn"))?;
+    if !regional.rsplit('.').next()?.starts_with("oss-") {
+        return None;
+    }
+    // Accept both the regional endpoint and a previously bucket-qualified one.
+    if !domain.starts_with(&format!("{}.", creds.bucket)) {
+        let qualified = format!("{}.{}", creds.bucket, domain);
+        url.set_host(Some(&qualified)).ok()?;
+    }
+    Some(url.origin().ascii_serialization())
+}
+
 /// Build the full URL for an S3 object.
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
+/// - OSS endpoints use virtual-hosted style; other custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
     let key = key.trim_start_matches('/');
     if is_aws_endpoint(&creds.endpoint) {
@@ -68,6 +88,8 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
             "https://{}.s3.{}.amazonaws.com/{}",
             creds.bucket, creds.region, key
         )
+    } else if let Some(origin) = oss_bucket_origin(creds) {
+        format!("{origin}/{key}")
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
@@ -81,6 +103,8 @@ fn build_bucket_url(creds: &S3Credentials) -> String {
             "https://{}.s3.{}.amazonaws.com/",
             creds.bucket, creds.region
         )
+    } else if let Some(origin) = oss_bucket_origin(creds) {
+        format!("{origin}/")
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/", scheme, host, creds.bucket)
@@ -276,8 +300,8 @@ fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
     let mut en = format!("S3 {op} failed: {status} ({safe_url})");
 
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-        zh.push_str("。请检查 Access Key ID 和 Secret Access Key。");
-        en.push_str(". Please verify your Access Key ID and Secret Access Key.");
+        zh.push_str("。请检查访问密钥、存储桶权限、区域和 Endpoint。");
+        en.push_str(". Please verify your access keys, bucket permissions, region, and endpoint.");
     } else if status == StatusCode::NOT_FOUND && op == "HEAD bucket" {
         zh.push_str("。请检查存储桶名称和区域是否正确。");
         en.push_str(". Please check the bucket name and region.");
@@ -524,6 +548,69 @@ pub(crate) async fn head_object(
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn oss_issue_3996_signs_bucket_host_for_connection_and_upload() {
+        let creds = test_creds(
+            "https://oss-cn-chengdu.aliyuncs.com/",
+            "cn-chengdu",
+            "backup-bucket",
+        );
+        for (method, raw, expected_path) in [
+            ("HEAD", build_bucket_url(&creds), "/"),
+            (
+                "PUT",
+                build_object_url(&creds, "cc-switch-sync/default/db.sql"),
+                "/cc-switch-sync/default/db.sql",
+            ),
+        ] {
+            let url = Url::parse(&raw).unwrap();
+            assert_eq!(
+                url.host_str(),
+                Some("backup-bucket.oss-cn-chengdu.aliyuncs.com"),
+                "OSS rejects path-style requests with 403 even when credentials are valid"
+            );
+            assert_eq!(url.path(), expected_path);
+            let mut headers = reqwest::header::HeaderMap::new();
+            sign_request(
+                method,
+                &url,
+                &mut headers,
+                &sha256_hex(b""),
+                &creds,
+                chrono::Utc::now(),
+            );
+            assert_eq!(headers["host"], "backup-bucket.oss-cn-chengdu.aliyuncs.com");
+        }
+    }
+
+    #[test]
+    fn oss_origins_handle_internal_acceleration_and_qualified_endpoints() {
+        for endpoint in [
+            "oss-cn-chengdu.aliyuncs.com",
+            "https://oss-cn-chengdu-internal.aliyuncs.com/",
+            "http://oss-accelerate.aliyuncs.com:8080/",
+            "https://backup.oss-cn-hangzhou.aliyuncs.com",
+        ] {
+            let creds = test_creds(endpoint, "cn-chengdu", "backup");
+            let url = Url::parse(&build_object_url(&creds, "snapshot/db.sql")).unwrap();
+            assert!(url.host_str().unwrap().starts_with("backup.oss-"));
+            assert!(!url.host_str().unwrap().starts_with("backup.backup."));
+            assert_eq!(url.path(), "/snapshot/db.sql");
+            if endpoint.starts_with("http://") {
+                assert_eq!(url.scheme(), "http");
+                assert_eq!(url.port(), Some(8080));
+            }
+        }
+        for endpoint in [
+            "oss-cn-chengdu.aliyuncs.com.example.com",
+            "storage.aliyuncs.com",
+            "minio.example.com:9000",
+            "oss-cn-chengdu.aliyuncs.com@evil.example",
+        ] {
+            assert!(oss_bucket_origin(&test_creds(endpoint, "auto", "backup")).is_none());
+        }
+    }
 
     // ── Crypto helpers ──
 

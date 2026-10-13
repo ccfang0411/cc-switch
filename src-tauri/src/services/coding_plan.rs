@@ -31,7 +31,7 @@ enum CodingPlanProvider {
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     let url = base_url.to_lowercase();
-    if url.contains("api.kimi.com/coding") {
+    if kimi_usage_url(base_url).is_some() {
         Some(CodingPlanProvider::Kimi)
     } else if url.contains("open.bigmodel.cn") || url.contains("bigmodel.cn") {
         Some(CodingPlanProvider::ZhipuCn)
@@ -119,11 +119,26 @@ fn make_error(msg: String) -> SubscriptionQuota {
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
-async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
+pub(crate) fn kimi_usage_url(base_url: &str) -> Option<String> {
+    let url = url::Url::parse(base_url).ok()?;
+    let host = url.host_str()?;
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || !matches!(host, "api.kimi.com" | "api.kimi.ai")
+        || !matches!(url.path().trim_end_matches('/'), "/coding" | "/coding/v1")
+    {
+        return None;
+    }
+    Some(format!("https://{host}/coding/v1/usages"))
+}
+
+async fn query_kimi(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
-        .get("https://api.kimi.com/coding/v1/usages")
+        .get(kimi_usage_url(base_url).ok_or("Invalid Kimi subscription endpoint")?)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
@@ -167,56 +182,71 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
+    Ok(parse_kimi_quota(&body))
+}
+
+fn parse_kimi_quota(body: &serde_json::Value) -> SubscriptionQuota {
     let mut tiers = Vec::new();
-
-    // 5 小时窗口限额（优先显示）
-    if let Some(limits) = body.get("limits").and_then(|v| v.as_array()) {
-        for limit_item in limits {
-            if let Some(detail) = limit_item.get("detail") {
-                let limit = detail.get("limit").and_then(parse_f64).unwrap_or(1.0);
-                let remaining = detail.get("remaining").and_then(parse_f64).unwrap_or(0.0);
-                let resets_at = detail.get("resetTime").and_then(extract_reset_time);
-
-                let used = (limit - remaining).max(0.0);
-                let utilization = if limit > 0.0 {
-                    (used / limit) * 100.0
-                } else {
-                    0.0
-                };
-                tiers.push(QuotaTier {
-                    name: "five_hour".to_string(),
-                    utilization,
-                    resets_at,
-                    used_value_usd: None,
-                    max_value_usd: None,
-                });
+    if let Some(usages) = body.get("usages") {
+        for (key, name) in [
+            ("limit_5h", "five_hour"),
+            ("limit_7d", "weekly_limit"),
+            ("limit_month_total", "monthly"),
+            ("limit_month_code", "monthly_code"),
+        ] {
+            if let Some(item) = usages.get(key) {
+                if let Some(ratio) = item
+                    .get("used_ratio")
+                    .and_then(parse_f64)
+                    .filter(|v| v.is_finite() && *v >= 0.0)
+                {
+                    tiers.push(QuotaTier {
+                        name: name.into(),
+                        utilization: (ratio * 100.0).clamp(0.0, 100.0),
+                        resets_at: item.get("reset_time").and_then(extract_reset_time),
+                        used_value_usd: None,
+                        max_value_usd: None,
+                    });
+                }
             }
         }
     }
-
-    // 总体用量（周限额）
-    if let Some(usage) = body.get("usage") {
-        let limit = usage.get("limit").and_then(parse_f64).unwrap_or(1.0);
-        let remaining = usage.get("remaining").and_then(parse_f64).unwrap_or(0.0);
-        let resets_at = usage.get("resetTime").and_then(extract_reset_time);
-
-        let used = (limit - remaining).max(0.0);
-        let utilization = if limit > 0.0 {
-            (used / limit) * 100.0
-        } else {
-            0.0
-        };
-        tiers.push(QuotaTier {
-            name: "weekly_limit".to_string(),
-            utilization,
-            resets_at,
-            used_value_usd: None,
-            max_value_usd: None,
-        });
+    // Legacy absolute windows remain supported, without duplicating modern pools.
+    for (name, detail) in [
+        (
+            "five_hour",
+            body.get("limits")
+                .and_then(|v| v.as_array())
+                .and_then(|v| v.first())
+                .and_then(|v| v.get("detail")),
+        ),
+        ("weekly_limit", body.get("usage")),
+    ] {
+        if tiers.iter().any(|tier| tier.name == name) {
+            continue;
+        }
+        if let Some(detail) = detail {
+            if let (Some(limit), Some(remaining)) = (
+                detail.get("limit").and_then(parse_f64),
+                detail.get("remaining").and_then(parse_f64),
+            ) {
+                if limit > 0.0 && limit.is_finite() && remaining.is_finite() {
+                    tiers.push(QuotaTier {
+                        name: name.into(),
+                        utilization: ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0),
+                        resets_at: detail.get("resetTime").and_then(extract_reset_time),
+                        used_value_usd: None,
+                        max_value_usd: None,
+                    });
+                }
+            }
+        }
     }
-
-    Ok(SubscriptionQuota {
-        tool: "coding_plan".to_string(),
+    if tiers.is_empty() {
+        return make_error("Kimi quota response contains no supported usage windows".into());
+    }
+    SubscriptionQuota {
+        tool: "coding_plan".into(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
         success: true,
@@ -226,7 +256,7 @@ async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
         credits_balance: None,
         error: None,
         queried_at: Some(now_millis()),
-    })
+    }
 }
 
 // ── 智谱 GLM ────────────────────────────────────────────────
@@ -1778,7 +1808,7 @@ pub async fn get_coding_plan_quota(
     }
 
     match provider {
-        CodingPlanProvider::Kimi => query_kimi(api_key).await,
+        CodingPlanProvider::Kimi => query_kimi(base_url, api_key).await,
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
             query_zhipu(base_url, api_key).await
         }
@@ -1796,6 +1826,58 @@ pub async fn get_coding_plan_quota(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kimi_quota_monthly_pools_override_legacy_without_fake_weekly() {
+        let quota = super::parse_kimi_quota(&serde_json::json!({
+            "limits":[{"detail":{"limit":"100", "remaining":"75"}}],
+            "usages":{
+                "limit_5h":{"used_ratio":0.2,"reset_time":"2026-10-13T12:00:00Z"},
+                "limit_month_total":{"used_ratio":0.35,"reset_time":"2026-11-01T00:00:00Z"},
+                "limit_month_code":{"used_ratio":0.12}
+            }
+        }));
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 3);
+        assert_eq!(quota.tiers[0].utilization, 20.0);
+        assert_eq!(
+            quota.tiers[0].resets_at.as_deref(),
+            Some("2026-10-13T12:00:00Z")
+        );
+        assert_eq!(quota.tiers[1].name, "monthly");
+        assert_eq!(quota.tiers[1].utilization, 35.0);
+        assert_eq!(quota.tiers[2].name, "monthly_code");
+        assert!(!quota.tiers.iter().any(|tier| tier.name == "weekly_limit"));
+    }
+    #[test]
+    fn kimi_quota_legacy_windows_and_empty_response() {
+        let quota = super::parse_kimi_quota(
+            &serde_json::json!({"limits":[{"detail":{"limit":"100","remaining":"40"}}],"usage":{"limit":100,"remaining":80}}),
+        );
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].utilization, 60.0);
+        assert_eq!(quota.tiers[1].name, "weekly_limit");
+        assert!(!super::parse_kimi_quota(&serde_json::json!({"usages":{}})).success);
+    }
+    #[test]
+    fn kimi_quota_regions_reject_lookalikes() {
+        assert_eq!(
+            super::kimi_usage_url("https://api.kimi.ai/coding/v1/").as_deref(),
+            Some("https://api.kimi.ai/coding/v1/usages")
+        );
+        assert_eq!(
+            super::kimi_usage_url("https://api.kimi.com/coding/v1").as_deref(),
+            Some("https://api.kimi.com/coding/v1/usages")
+        );
+        for url in [
+            "https://api.kimi.com.evil.test/coding/v1",
+            "https://evil.test/api.kimi.com/coding",
+            "https://api.kimi.com/v1",
+            "http://api.kimi.com/coding/v1",
+        ] {
+            assert!(super::kimi_usage_url(url).is_none());
+        }
+    }
     use super::{
         detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
         parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,

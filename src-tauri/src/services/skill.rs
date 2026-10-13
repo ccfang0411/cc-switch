@@ -655,7 +655,7 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
-            AppType::ClaudeDesktop | AppType::Mcode => {}
+            AppType::ClaudeDesktop | AppType::Mcode | AppType::KimiCode => {}
             AppType::Codex => {
                 if let Some(custom) = crate::settings::get_codex_override_dir() {
                     return Ok(custom.join("skills"));
@@ -698,6 +698,7 @@ impl SkillService {
 
         Ok(match app {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
+            AppType::KimiCode => crate::kimi_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1056,18 +1057,22 @@ impl SkillService {
                 Ok(directory) => {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
-                    let mcode_destination = if skill.apps.mcode {
-                        let destination =
-                            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::Mcode)?
+                    let mut protected_destinations = Vec::new();
+                    for app in [AppType::Mcode, AppType::KimiCode] {
+                        if skill.apps.is_enabled_for(&app) {
+                            let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
-                        Self::inspect_pi_skill_destination(&source, &destination, &directory)
-                            .context(
-                                "MiniMax Code Skill could not be verified; uninstall cancelled",
-                            )?;
-                        Some(destination)
-                    } else {
-                        None
-                    };
+                            let label = match app {
+                                AppType::Mcode => "MiniMax Code",
+                                _ => "Kimi Code",
+                            };
+                            Self::inspect_pi_skill_destination(&source, &destination, &directory)
+                                .with_context(|| {
+                                format!("{label} Skill could not be verified; uninstall cancelled")
+                            })?;
+                            protected_destinations.push((destination, label));
+                        }
+                    }
                     let mut preserved_pi_path: Option<PathBuf> = None;
                     let mut pi_cleanup_incomplete = false;
                     let mut pi_removal_path = None;
@@ -1113,11 +1118,11 @@ impl SkillService {
                     )?
                     .map(|path| path.to_string_lossy().to_string());
 
-                    if let Some(destination) = mcode_destination {
+                    for (destination, label) in protected_destinations {
                         Self::remove_verified_pi_destination(&source, &destination, &directory)
-                            .context(
-                                "MiniMax Code Skill could not be removed; uninstall cancelled",
-                            )?;
+                            .with_context(|| {
+                                format!("{label} Skill could not be removed; uninstall cancelled")
+                            })?;
                     }
 
                     // Pi 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
@@ -1136,7 +1141,7 @@ impl SkillService {
 
                     // 其他应用沿用既有的逐项容错行为。
                     for app in AppType::all() {
-                        if matches!(app, AppType::Pi | AppType::Mcode) {
+                        if matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode) {
                             continue;
                         }
                         let _ = Self::remove_from_app_preserving(
@@ -1602,7 +1607,7 @@ impl SkillService {
 
         let dest = ssot_dir.join(&skill.directory);
         let mut deployments = Vec::new();
-        for app in [AppType::Pi, AppType::Mcode] {
+        for app in [AppType::Pi, AppType::Mcode, AppType::KimiCode] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
                     Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory);
@@ -1617,7 +1622,15 @@ impl SkillService {
         // 备份旧文件
         let _ = Self::create_uninstall_backup(&skill);
 
-        if !skill.apps.mcode {
+        // MCode / Kimi Code 的原生副本与 SSOT 一起在提交前保持旧内容（见
+        // update_protected_skill_files），所以这条路线上 SSOT 不能先替换。
+        let protected_apps: Vec<AppType> = [AppType::Mcode, AppType::KimiCode]
+            .into_iter()
+            .filter(|app| skill.apps.is_enabled_for(app))
+            .collect();
+        let protected = !protected_apps.is_empty();
+
+        if !protected {
             if dest.exists() {
                 fs::remove_dir_all(&dest)?;
             }
@@ -1625,7 +1638,7 @@ impl SkillService {
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source = if skill.apps.mcode { &source } else { &dest };
+        let metadata_source = if protected { &source } else { &dest };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -1653,13 +1666,20 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill = if skill.apps.mcode {
-            Self::update_mcode_skill_files(&source, &dest, &skill.directory, &deployments, || {
-                if !db.update_skill_metadata(&updated_metadata)? {
-                    return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                }
-                Ok(updated_metadata)
-            })?
+        let mut updated_skill = if protected {
+            Self::update_protected_skill_files(
+                &source,
+                &dest,
+                &skill.directory,
+                &deployments,
+                &protected_apps,
+                || {
+                    if !db.update_skill_metadata(&updated_metadata)? {
+                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                    }
+                    Ok(updated_metadata)
+                },
+            )?
         } else {
             for (destination, deployment) in deployments {
                 Self::refresh_pi_skill_destination(
@@ -1675,7 +1695,7 @@ impl SkillService {
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
-            if matches!(app, AppType::Pi | AppType::Mcode) {
+            if matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode) {
                 continue;
             }
             if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
@@ -1689,15 +1709,15 @@ impl SkillService {
 
     // Keep the old SSOT and native copies until metadata is committed. In particular,
     // a failed native write must not make the old copy appear to be a user edit.
-    fn update_mcode_skill_files<T>(
+    fn update_protected_skill_files<T>(
         source: &Path,
         ssot: &Path,
         directory: &str,
         deployments: &[(PathBuf, PiSkillDeployment)],
+        protected_apps: &[AppType],
         commit: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         Self::validate_sync_source_dir(source, directory)?;
-        let native = Self::get_app_skills_dir(&AppType::Mcode)?.join(directory);
         let mut targets = vec![(ssot.to_path_buf(), false)];
         for (destination, deployment) in deployments {
             Self::ensure_pi_skill_destination_matches(ssot, destination, directory)?;
@@ -1706,8 +1726,11 @@ impl SkillService {
                 matches!(deployment, PiSkillDeployment::Symlink { .. }),
             ));
         }
-        if !native.exists() && !Self::is_symlink(&native) {
-            targets.push((native, Self::get_sync_method() != SyncMethod::Copy));
+        for app in protected_apps {
+            let native = Self::get_app_skills_dir(app)?.join(directory);
+            if !native.exists() && !Self::is_symlink(&native) {
+                targets.push((native, Self::get_sync_method() != SyncMethod::Copy));
+            }
         }
 
         let mut staged = Vec::new();
@@ -1717,7 +1740,7 @@ impl SkillService {
                 .context("Skill destination has no parent")?;
             fs::create_dir_all(parent)?;
             let staging = tempfile::Builder::new()
-                .prefix(".mcode-skill-update-")
+                .prefix(".native-skill-update-")
                 .tempdir_in(parent)?;
             let replacement = staging.path().join("new");
             if symlink {
@@ -1764,7 +1787,7 @@ impl SkillService {
             if !rollback_errors.is_empty() {
                 let backups: Vec<_> = staged.into_iter().map(|(_, stage)| stage.keep()).collect();
                 return Err(anyhow!(
-                    "{error}; MiniMax Code Skill rollback failed: {}; backups: {backups:?}",
+                    "{error}; protected Skill rollback failed: {}; backups: {backups:?}",
                     rollback_errors.join("; ")
                 ));
             }
@@ -1887,6 +1910,16 @@ impl SkillService {
             };
             if skill.apps.mcode {
                 let destination = Self::get_app_skills_dir(&AppType::Mcode)?.join(&directory);
+                if let Some(deployment) =
+                    Self::inspect_pi_skill_destination(&src, &destination, &directory)
+                        .ok()
+                        .flatten()
+                {
+                    mcode_deployments.push((directory.clone(), destination, deployment));
+                }
+            }
+            if skill.apps.kimicode {
+                let destination = Self::get_app_skills_dir(&AppType::KimiCode)?.join(&directory);
                 if let Some(deployment) =
                     Self::inspect_pi_skill_destination(&src, &destination, &directory)
                         .ok()
@@ -2201,6 +2234,7 @@ impl SkillService {
         let agents_lock = parse_agents_lock();
         let mut imported = Vec::new();
         let mut skipped_mcode = Vec::new();
+        let mut skipped_kimicode = Vec::new();
         let mut not_enabled = Vec::new();
 
         // 将 lock 文件中发现的仓库保存到 skill_repos
@@ -2311,12 +2345,50 @@ impl SkillService {
                 }
             }
 
+            // An explicitly imported Kimi Code link must point at the managed copy
+            // so subsequent toggles and updates can verify its ownership.
+            if apps.kimicode {
+                let projection = (|| -> Result<()> {
+                    let native = Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::KimiCode)?
+                        .join(&dir_name);
+                    if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                        if Self::compute_pi_deployment_hash(&native)?
+                            != Self::compute_pi_deployment_hash(&dest)?
+                        {
+                            return Err(anyhow!(
+                                "Kimi Code Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
+                            ));
+                        }
+                        if let Some(deployment) =
+                            Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
+                        {
+                            Self::refresh_pi_skill_destination(
+                                &dest,
+                                &native,
+                                &dir_name,
+                                &deployment,
+                            )?;
+                        }
+                    } else {
+                        Self::preflight_install_destination(&dest, &dir_name, &AppType::KimiCode)?;
+                    }
+                    if !native.exists() {
+                        Self::sync_to_app_dir(&dir_name, &AppType::KimiCode)?;
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = projection {
+                    skipped_kimicode.push(format!("{dir_name}: {error}"));
+                    continue;
+                }
+            }
+
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
             // 让库里的标志始终等于磁盘上的事实。
             for app in AppType::all() {
-                if matches!(app, AppType::Pi | AppType::Mcode)
+                if matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode)
                     || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)
                 {
@@ -2366,6 +2438,12 @@ impl SkillService {
             problems.push(format!(
                 "skipped MiniMax Code entries: {}",
                 skipped_mcode.join("; ")
+            ));
+        }
+        if !skipped_kimicode.is_empty() {
+            problems.push(format!(
+                "skipped Kimi Code entries: {}",
+                skipped_kimicode.join("; ")
             ));
         }
         if !not_enabled.is_empty() {
@@ -2421,7 +2499,7 @@ impl SkillService {
     fn preflight_install_destination(source: &Path, directory: &str, app: &AppType) -> Result<()> {
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
-        if !matches!(app, AppType::Pi | AppType::Mcode) {
+        if !matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode) {
             return Ok(());
         }
         let destination = app_dir.join(directory);
@@ -2595,7 +2673,8 @@ impl SkillService {
 
         let dest = app_dir.join(&directory);
 
-        if matches!(app, AppType::Pi | AppType::Mcode) && (dest.exists() || Self::is_symlink(&dest))
+        if matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode)
+            && (dest.exists() || Self::is_symlink(&dest))
         {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
         }
@@ -2784,7 +2863,7 @@ impl SkillService {
         }
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
-            if matches!(app, AppType::Pi | AppType::Mcode) {
+            if matches!(app, AppType::Pi | AppType::Mcode | AppType::KimiCode) {
                 let source = ssot_dir.join(&directory);
                 Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
             }
@@ -2853,9 +2932,9 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode directories may have been installed outside CC Switch.
+        // Unselected MCode / Kimi Code directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
-        if app_dir.exists() && !matches!(app, AppType::Mcode) {
+        if app_dir.exists() && !matches!(app, AppType::Mcode | AppType::KimiCode) {
             for entry in fs::read_dir(&app_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -3873,6 +3952,9 @@ impl SkillService {
 
         for app in AppType::all() {
             if matches!(app, AppType::Mcode) && !skill.apps.mcode {
+                continue;
+            }
+            if matches!(app, AppType::KimiCode) && !skill.apps.kimicode {
                 continue;
             }
             let app_dir = match Self::get_app_skills_dir(&app) {
@@ -5824,11 +5906,12 @@ mod tests {
                 .unwrap()
                 .execute_batch("PRAGMA query_only = ON")
                 .unwrap();
-            assert!(SkillService::update_mcode_skill_files(
+            assert!(SkillService::update_protected_skill_files(
                 &source,
                 &ssot,
                 &skill.directory,
                 &deployments,
+                &[AppType::Mcode],
                 || SkillService::persist_updated_skill_metadata(&db, &updated),
             )
             .is_err());
@@ -5849,11 +5932,12 @@ mod tests {
                 .unwrap()
                 .execute_batch("PRAGMA query_only = OFF")
                 .unwrap();
-            SkillService::update_mcode_skill_files(
+            SkillService::update_protected_skill_files(
                 &source,
                 &ssot,
                 &skill.directory,
                 &deployments,
+                &[AppType::Mcode],
                 || SkillService::persist_updated_skill_metadata(&db, &updated),
             )
             .unwrap();
@@ -5895,11 +5979,12 @@ mod tests {
         let parent = native.parent().unwrap();
         let original_permissions = fs::metadata(parent).unwrap().permissions();
         fs::set_permissions(parent, fs::Permissions::from_mode(0o555)).unwrap();
-        let result: Result<()> = SkillService::update_mcode_skill_files(
+        let result: Result<()> = SkillService::update_protected_skill_files(
             &source,
             &ssot,
             "test-skill",
             &deployments,
+            &[AppType::Mcode],
             || panic!("failed native staging must not commit metadata"),
         );
         fs::set_permissions(parent, original_permissions).unwrap();
@@ -5908,9 +5993,14 @@ mod tests {
             .unwrap()
             .contains("name: old"));
         SkillService::ensure_pi_skill_destination_matches(&ssot, &native, "test-skill").unwrap();
-        SkillService::update_mcode_skill_files(&source, &ssot, "test-skill", &deployments, || {
-            Ok(())
-        })
+        SkillService::update_protected_skill_files(
+            &source,
+            &ssot,
+            "test-skill",
+            &deployments,
+            &[AppType::Mcode],
+            || Ok(()),
+        )
         .unwrap();
         assert!(fs::read_to_string(native.join("SKILL.md"))
             .unwrap()

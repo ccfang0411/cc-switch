@@ -19,7 +19,7 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
-        get_adapter, get_claude_api_format,
+        get_adapter, get_claude_api_format, kimi_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
@@ -214,10 +214,10 @@ fn resolve_stack_target(
     }
 }
 
-/// Stack 模型解不出来时的错误体：Claude 用 Anthropic 的错误信封，Codex 用 OpenAI 的。
+/// Stack 模型解不出来时的错误体：Anthropic 入站的应用用 Anthropic 的错误信封，其余用 OpenAI 的。
 fn stack_miss_body(app_type: &AppType, message: &str) -> Value {
     match app_type {
-        AppType::Claude => json!({
+        AppType::Claude | AppType::KimiCode => json!({
             "type": "error",
             "error": { "type": "invalid_request_error", "message": message },
         }),
@@ -246,6 +246,23 @@ pub async fn handle_messages(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+}
+
+/// 处理 /kimicode/v1/messages 请求：Kimi Code 的代理契约把客户端协议固定为
+/// Anthropic Messages，上行协议按目标行的 `type` 在转发层选择。
+pub async fn handle_kimi_messages(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::KimiCode,
+        "Kimi",
+        "kimicode",
+        Some("/kimicode"),
+    )
+    .await
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -359,8 +376,11 @@ async fn handle_messages_for_app(
     let api_format = result
         .claude_api_format
         .as_deref()
-        .unwrap_or_else(|| get_claude_api_format(&ctx.provider))
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| match app_type {
+            AppType::KimiCode => kimi_api_format(&ctx.provider).to_string(),
+            _ => get_claude_api_format(&ctx.provider).to_string(),
+        });
     let response = result.response;
 
     // 检查是否需要格式转换（OpenRouter 等中转服务）
@@ -391,7 +411,10 @@ async fn handle_messages_for_app(
         response,
         &ctx,
         &state,
-        &CLAUDE_PARSER_CONFIG,
+        &super::handler_config::UsageParserConfig {
+            app_type_str,
+            ..CLAUDE_PARSER_CONFIG
+        },
         is_stream,
         connection_guard,
     )

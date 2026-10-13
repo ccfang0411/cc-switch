@@ -274,8 +274,10 @@ export function useProviderActions(
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
-            activeApp === "mcode"
+            activeApp === "mcode" ||
+            (activeApp === "kimicode" && !isProxyTakeover)
           ) {
+            // Kimi Code 在路由 / 聚合模式下切换的是路由目标或聚合默认，不是添加进配置
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }

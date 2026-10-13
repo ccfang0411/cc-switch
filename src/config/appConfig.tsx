@@ -27,6 +27,7 @@ export const APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "kimicode",
 ];
 
 export const DEFAULT_VISIBLE_APPS: VisibleApps = {
@@ -40,6 +41,7 @@ export const DEFAULT_VISIBLE_APPS: VisibleApps = {
   hermes: true,
   pi: true,
   mcode: true,
+  kimicode: true,
 };
 
 /** App IDs shown in Skills panels. */
@@ -52,11 +54,12 @@ export const SKILLS_APP_IDS: AppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "kimicode",
 ];
 
 export type ProxyAppId = Extract<
   AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
+  "claude" | "codex" | "gemini" | "grokbuild" | "kimicode"
 >;
 
 /** Apps with a complete local gateway + failover data plane. */
@@ -65,6 +68,7 @@ export const PROXY_APP_IDS: ProxyAppId[] = [
   "codex",
   "gemini",
   "grokbuild",
+  "kimicode",
 ];
 
 export function isProxyAppId(appId: string): appId is ProxyAppId {
@@ -72,9 +76,9 @@ export function isProxyAppId(appId: string): appId is ProxyAppId {
 }
 
 /** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
-export type StackAppId = Extract<ProxyAppId, "claude" | "codex">;
+export type StackAppId = Extract<ProxyAppId, "claude" | "codex" | "kimicode">;
 
-export const STACK_APP_IDS: StackAppId[] = ["claude", "codex"];
+export const STACK_APP_IDS: StackAppId[] = ["claude", "codex", "kimicode"];
 
 export function isStackAppId(appId: string): appId is StackAppId {
   return (STACK_APP_IDS as string[]).includes(appId);
@@ -82,10 +86,15 @@ export function isStackAppId(appId: string): appId is StackAppId {
 
 export type AdditiveAppId = Extract<
   AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode"
+  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimicode"
 >;
 
+/**
+ * 多供应商共存进 live 配置的应用。Kimi Code 同时是切换式应用（在 PROXY_APP_IDS 里）：
+ * 共存语义只在直连模式成立，路由 / 聚合模式的 live 写入由模式机接管。
+ */
 export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
+  "kimicode",
   "mcode",
   "opencode",
   "openclaw",
@@ -106,6 +115,7 @@ export const EDITOR_VIEW_APP_IDS: AppId[] = [
   "codex",
   "gemini",
   "grokbuild",
+  "kimicode",
 ];
 
 export function usesEditorView(appId: AppId): boolean {
@@ -123,6 +133,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "hermes",
   "pi",
   "mcode",
+  "kimicode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
@@ -221,6 +232,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     activeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     badgeClass:
       "bg-orange-500/10 text-orange-700 dark:text-orange-300 border-0 gap-1.5",
+  },
+  kimicode: {
+    label: "Kimi Code",
+    icon: <ProviderIcon icon="kimi" name="Kimi Code" size={14} />,
+    activeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
   pi: {
     label: "Pi",

@@ -40,6 +40,7 @@ export function ModelDropdown({
     <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          type="button"
           variant="outline"
           size="icon"
           className="shrink-0"

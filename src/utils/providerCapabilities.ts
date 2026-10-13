@@ -151,7 +151,12 @@ export function providerNeedsRouting(
     return isManagedOAuth || provider.meta?.claudeDesktopMode === "proxy";
   }
 
-  if (appId !== "claude" && appId !== "codex" && appId !== "grokbuild") {
+  if (
+    appId !== "claude" &&
+    appId !== "codex" &&
+    appId !== "grokbuild" &&
+    appId !== "kimicode"
+  ) {
     return false;
   }
 

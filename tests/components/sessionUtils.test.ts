@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCdResumeCommand,
+  isSessionAppId,
+  canDeleteSession,
+  SESSION_SOURCE_PATHS,
   getSessionLastText,
   getSessionTimeBucket,
   groupSessionsByProject,
@@ -11,6 +14,18 @@ import {
 import type { SessionMeta } from "@/types";
 
 describe("session utils", () => {
+  it("includes Kimi history while leaving deletion to the native app", () => {
+    expect(isSessionAppId("kimicode")).toBe(true);
+    expect(SESSION_SOURCE_PATHS.kimicode[0]).toContain("wire.jsonl");
+    expect(
+      canDeleteSession({
+        providerId: "kimicode",
+        sessionId: "session_test",
+        sourcePath: "/tmp/kimi/sessions/wire.jsonl",
+      }),
+    ).toBe(false);
+  });
+
   it("groups sessions by project directory, newest group first and unknown last", () => {
     const sessions: SessionMeta[] = [
       {

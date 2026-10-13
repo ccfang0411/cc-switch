@@ -372,6 +372,7 @@
     }
   },
   "settings": {
+    "branchUpdatesDisabled": "独立分支 · 已关闭应用更新",
     "title": "设置",
     "general": {
       "appearance": "外观",
@@ -904,6 +905,8 @@
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
     "piConfigDir": "Pi 配置目录",
     "piConfigDirDescription": "覆盖 Pi 配置目录（models.json、指令文件、提示词、Skills 与会话）。",
+    "kimicodeConfigDir": "Kimi Code 配置目录",
+    "kimicodeConfigDirDescription": "覆盖 Kimi Code 配置目录（config.toml、提示词与 Skills）。启动 Kimi CLI 时需设置 KIMI_CODE_HOME 为同一路径。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -912,6 +915,7 @@
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
     "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
+    "browsePlaceholderKimicode": "例如：/home/<你的用户名>/.kimi-code",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -1044,12 +1048,36 @@
     "openclaw": "OpenClaw",
     "hermes": "Hermes",
     "pi": "Pi",
-    "mcode": "MiniMax Code"
+    "mcode": "MiniMax Code",
+    "kimicode": "Kimi Code"
   },
   "mcode": {
     "empty": {
       "title": "还没有添加自定义供应商",
       "description": "MiniMax 官方账号登录由 MiniMax Code 自行管理，无需导入；config.yaml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    }
+  },
+  "kimicode": {
+    "empty": {
+      "title": "还没有添加自定义供应商",
+      "description": "Kimi 账号登录由 Kimi Code 自行管理，无需导入；config.toml 里已有的自定义供应商会自动显示在这里。点击右上角 +，从预设或自定义配置添加供应商。"
+    },
+    "form": {
+      "addModel": "添加模型",
+      "manualModelId": "手动添加模型 ID",
+      "modelDefault": "使用模型默认值",
+      "effortForModel": "{{model}} 的推理强度",
+      "reasoningEffort": "默认推理强度",
+      "officialContext": "模型目录报告的上下文长度：{{count}}",
+      "removeModel": "移除 {{model}}",
+      "setDefaultModel": "设为默认",
+      "defaultModel": "默认模型",
+      "searchModels": "搜索模型",
+      "chooseModels": "选择要添加的模型",
+      "codexModelsHint": "从当前 ChatGPT 账号获取模型、上下文长度和推理强度。勾选要添加的模型，再指定默认模型。",
+      "providerTypeHint": "该端点在 Kimi Code 里使用的供应商协议（type）。",
+      "capabilities": "能力",
+      "capabilitiesHint": "模型能力，逗号分隔，例如 thinking, image_in, tool_use。"
     }
   },
   "pi": {
@@ -1283,6 +1311,7 @@
     "deleteSessionEllipsis": "删除会话",
     "deleteEllipsis": "删除",
     "selectSessionLabel": "选择 {{title}}",
+    "kimicodeDeleteHint": "请在 Kimi Code 中删除",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
@@ -2157,6 +2186,7 @@
       "grokbuild": "Grok Build",
       "pi": "Pi",
       "mcode": "MiniMax Code",
+      "kimicode": "Kimi Code",
       "label": "按应用筛选"
     },
     "rawInputLabel": "原始",
@@ -2536,6 +2566,7 @@
     "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式"
   },
   "dbUpgrade": {
+    "branchRecovery": "此独立分支已关闭应用更新。请先备份数据库，再手动安装兼容的独立分支版本，或恢复兼容的数据库备份。",
     "title": "数据库版本过新",
     "description": "当前数据库由更新版本的 CC Switch 创建，需要升级应用后才能继续使用。升级不会删除你的数据。",
     "versionInfo": "数据库版本 v{{db}} · 应用支持 v{{supported}}",
@@ -2596,7 +2627,8 @@
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes",
-        "mcode": "MiniMax Code"
+        "mcode": "MiniMax Code",
+        "kimicode": "Kimi Code"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -3961,6 +3993,7 @@
       "geminiFlash": "Flash",
       "geminiFlashLite": "Lite",
       "monthly": "每月",
+      "monthlyCode": "每月代码额度",
       "credits": "额度",
       "copilotPremium": "高级请求"
     },
@@ -3975,6 +4008,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "每周",
     "monthly": "每月",
+    "monthlyCode": "每月代码额度",
     "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
@@ -4043,7 +4077,8 @@
       "openclaw": "通过 npm 安装",
       "hermes": "安装时运行官方安装脚本",
       "pi": "通过 npm 安装",
-      "mcode": "安装时运行官方安装脚本，失败时改用 npm"
+      "mcode": "安装时运行官方安装脚本，失败时改用 npm",
+      "kimicode": "通过 npm 安装"
     }
   },
   "appPage": {
@@ -4120,6 +4155,7 @@
       "stackNoteEmpty": "还没有添加其他供应商，切换后只有默认供应商；可以之后在「聚合」页签里添加。",
       "stackNoteNoFailover": "聚合模式不做故障转移；队列和设置会保留，回到路由模式后恢复。",
       "stackNoteRestartCodex": "需要重启 {{app}} 才能看到聚合的模型；桌面版要彻底退出后重新打开。",
+      "stackNoteRestartApp": "需要重启 {{app}} 才能看到聚合的模型。",
       "stackToRouteNote": "聚合的模型会从 /model 撤下（名单保留）；已选中的聚合模型需要改回普通模型。",
       "confirmRoute": "开始路由",
       "confirmStack": "切换到聚合模式",
@@ -4463,7 +4499,7 @@
       "jsonMaskedUnknown": "「{{key}}」的值还是占位符，但草稿里没有这个键的原值：填入真实值，或先点「显示值」再改键名。",
       "writeTo": "写入到",
       "writeToHelpTitle": "怎么写进各应用",
-      "writeToHelp": "同一份配置原样写进勾选的每个应用；某个应用要不同参数时，另建一条只勾它。MiniMax Code 只替换连接字段，mcp.json 里的其他字段保留。",
+      "writeToHelp": "同一份配置原样写进勾选的每个应用；某个应用要不同参数时，另建一条只勾它。MiniMax Code 和 Kimi Code 只替换连接字段，各自 mcp.json 里的其他字段保留。",
       "meta": "说明与链接",
       "metaHint": "显示名、描述、标签、主页、文档",
       "displayName": "显示名",

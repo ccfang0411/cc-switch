@@ -29,6 +29,7 @@ const CLIENT_FILE: Partial<Record<AppId, string>> = {
   codex: "~/.codex/config.toml",
   gemini: "~/.gemini/.env",
   grokbuild: "~/.grok/config.toml",
+  kimicode: "~/.kimi-code/config.toml",
 };
 
 export type ModeDialogState =
@@ -162,9 +163,12 @@ function EnterBody({
             : t("mode.dialog.stackNoteEmpty"),
           t("mode.dialog.stackNoteNoFailover"),
           // Claude Code 运行中就会读到改过的 settings.json，不用重启。
+          // Codex / Kimi Code 只在启动时读配置，要重启才能看到聚合的模型。
           ...(app === "codex"
             ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
-            : []),
+            : app === "kimicode"
+              ? [t("mode.dialog.stackNoteRestartApp", { app: appName })]
+              : []),
         ];
   if (active === "stack" && target === "route") {
     notes.push(t("mode.dialog.stackToRouteNote"));
