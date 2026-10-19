@@ -35,10 +35,10 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
 import { useSessionUsageSummary } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import type { SessionMeta, TurnIndex } from "@/types";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -48,6 +48,7 @@ import { sessionMenuItemClass } from "../SessionItem";
 import {
   buildCdResumeCommand,
   canDeleteSession,
+  canRenameSession,
   formatClock,
   formatShortDateTime,
   isSessionAppId,
@@ -81,6 +82,7 @@ export interface SessionReaderHeaderProps {
   onExportMarkdown: () => void;
   onOpenTerminalSettings: () => void;
   onReload: () => void;
+  onRename: () => void;
   onDelete: () => void;
 }
 
@@ -103,6 +105,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   onExportMarkdown,
   onOpenTerminalSettings,
   onReload,
+  onRename,
   onDelete,
 }: SessionReaderHeaderProps) {
   const { t } = useTranslation();
@@ -111,6 +114,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   const isCodex = session.providerId === "codex";
   const command = session.resumeCommand;
   const deletable = canDeleteSession(session);
+  const renameable = canRenameSession(session);
 
   const launchLabel = launchTerminal
     ? t("sessionManager.resumeIn", {
@@ -338,6 +342,14 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         <DropdownMenuItem className={sessionMenuItemClass} onSelect={onReload}>
           {t("sessionManager.reload", { defaultValue: "重新读取" })}
         </DropdownMenuItem>
+        {renameable && (
+          <DropdownMenuItem
+            className={sessionMenuItemClass}
+            onSelect={onRename}
+          >
+            {t("sessionManager.renameEllipsis", { defaultValue: "重命名…" })}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className={cn(
@@ -504,6 +516,7 @@ const Sep = () => (
  */
 function SessionUsageSummary({ session }: { session: SessionMeta }) {
   const { i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
   const rt = useReaderT();
   const { data } = useSessionUsageSummary(
     session.providerId,
@@ -531,7 +544,7 @@ function SessionUsageSummary({ session }: { session: SessionMeta }) {
         {cost !== null && (
           <>
             {" · "}
-            {fmtUsd(cost, 2)}
+            {fmtCny(cost, 2)}
           </>
         )}
       </span>

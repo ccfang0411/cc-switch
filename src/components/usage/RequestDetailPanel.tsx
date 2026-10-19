@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import {
@@ -82,13 +83,10 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
   );
 }
 
-const usd = (value: string) => {
-  const num = parseFiniteNumber(value);
-  return num == null ? "--" : `$${num.toFixed(4)}`;
-};
-
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
+  const usd = (value: string) => fmtCny(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
@@ -114,7 +112,7 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: getUsageProviderLabel(request.providerName, t).shortLabel,
+      value: getUsageProviderLabel(request.providerName, t).label,
     },
     {
       key: "providerId",
@@ -220,9 +218,7 @@ function useDetailSections(request: RequestLog) {
     value: unpriced ? t("usage.unpriced") : usd(request.totalCostUsd),
     strong: !unpriced,
     muted: unpriced,
-    title: unpriced
-      ? undefined
-      : `$${parseFiniteNumber(request.totalCostUsd)?.toFixed(6) ?? "--"}`,
+    title: unpriced ? undefined : fmtCny(request.totalCostUsd, 6),
   });
 
   let performance: DetailRow[];

@@ -1,6 +1,9 @@
 //! Kimi Code 2.x stores session metadata separately from its append-only wire log.
 //! Read context/user and loop events, not mirrored UI events or LLM request snapshots.
+//! Delete and rename mirror the native engine's on-disk order so its session index
+//! and read model reconcile on the next scan.
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -238,10 +241,299 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+/// Resolve the session directory from the wire path and verify it is exactly
+/// `<root>/<workspace>/<session-id>`, so a crafted source path cannot make the
+/// delete/rename helpers touch anything else.
+fn session_dir_from_source(
+    root: &Path,
+    source: &Path,
+    session_id: &str,
+) -> Result<PathBuf, String> {
+    if source.file_name().and_then(|name| name.to_str()) != Some("wire.jsonl") {
+        return Err(format!(
+            "Unexpected Kimi Code session source: {}",
+            source.display()
+        ));
+    }
+    let main_dir = source
+        .parent()
+        .ok_or_else(|| format!("Invalid Kimi Code session path: {}", source.display()))?;
+    if main_dir.file_name().and_then(|name| name.to_str()) != Some("main") {
+        return Err(format!(
+            "Unexpected Kimi Code agent directory: {}",
+            main_dir.display()
+        ));
+    }
+    let agents_dir = main_dir
+        .parent()
+        .ok_or_else(|| format!("Invalid Kimi Code session path: {}", source.display()))?;
+    if agents_dir.file_name().and_then(|name| name.to_str()) != Some("agents") {
+        return Err(format!(
+            "Unexpected Kimi Code session path: {}",
+            source.display()
+        ));
+    }
+    let session_dir = agents_dir
+        .parent()
+        .ok_or_else(|| format!("Invalid Kimi Code session path: {}", source.display()))?;
+    if !session_dir.starts_with(root) {
+        return Err(format!(
+            "Kimi Code session directory is outside its root: {}",
+            session_dir.display()
+        ));
+    }
+    if session_dir.file_name().and_then(|name| name.to_str()) != Some(session_id) {
+        return Err(format!(
+            "Kimi Code session directory does not match the session ID: {}",
+            session_dir.display()
+        ));
+    }
+    if session_dir
+        .parent()
+        .and_then(|workspace| workspace.parent())
+        != Some(root)
+    {
+        return Err(format!(
+            "Kimi Code session directory is not directly under its workspace: {}",
+            session_dir.display()
+        ));
+    }
+    Ok(session_dir.to_path_buf())
+}
+
+fn read_state_for_session(session_dir: &Path, session_id: &str) -> Result<Value, String> {
+    let state_path = session_dir.join("state.json");
+    let bytes = std::fs::read(&state_path)
+        .map_err(|error| format!("Failed to read Kimi Code session metadata: {error}"))?;
+    let state: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Failed to parse Kimi Code session metadata: {error}"))?;
+    let found = state.get("id").and_then(Value::as_str).unwrap_or_default();
+    if found != session_id {
+        return Err(format!(
+            "Kimi Code session ID mismatch: expected {session_id}, found {found}"
+        ));
+    }
+    Ok(state)
+}
+
+/// Mirror `sessionIndex.remove`: append the tombstone the native engine writes,
+/// then leave a dirty mark so the next CLI scan re-reads the session index.
+fn remove_from_session_index(data_dir: &Path, session_id: &str) {
+    use std::io::Write;
+
+    let path = data_dir.join("session_index.jsonl");
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let record = serde_json::json!({ "sessionId": session_id, "deleted": true });
+    let _ = writeln!(file, "{record}");
+}
+
+fn mark_session_dirty(root: &Path, session_id: &str) {
+    let scope = root.join(".index-dirty");
+    if std::fs::create_dir_all(&scope).is_err() {
+        return;
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let _ = std::fs::write(scope.join(format!("{session_id}.{stamp}")), b"");
+}
+
+/// Drop the session from `<data_dir>/file-history/<workspace>` if it is listed
+/// there. Failure is non-fatal: the document is retention metadata only.
+fn drop_file_history_entry(data_dir: &Path, workspace_id: &str, session_id: &str) {
+    let path = data_dir.join("file-history").join(workspace_id);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    let Ok(mut document) = serde_json::from_slice::<Value>(&bytes) else {
+        return;
+    };
+    let Some(sessions) = document.get_mut("sessions").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let before = sessions.len();
+    sessions.retain(|entry| entry.get("id").and_then(Value::as_str) != Some(session_id));
+    if sessions.len() == before {
+        return;
+    }
+    let Ok(serialized) = serde_json::to_vec(&document) else {
+        return;
+    };
+    let _ = crate::config::atomic_write_private(&path, &serialized);
+}
+
+pub fn delete_session(root: &Path, source: &Path, session_id: &str) -> Result<bool, String> {
+    let session_dir = session_dir_from_source(root, source, session_id)?;
+    read_state_for_session(&session_dir, session_id)?;
+    std::fs::remove_dir_all(&session_dir).map_err(|error| {
+        format!(
+            "Failed to delete Kimi Code session directory {}: {error}",
+            session_dir.display()
+        )
+    })?;
+
+    if let Some(data_dir) = root.parent() {
+        remove_from_session_index(data_dir, session_id);
+        if let Some(workspace_id) = session_dir
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+        {
+            drop_file_history_entry(data_dir, workspace_id, session_id);
+        }
+    }
+    mark_session_dirty(root, session_id);
+    Ok(true)
+}
+
+pub fn rename_session(
+    root: &Path,
+    source: &Path,
+    session_id: &str,
+    title: &str,
+) -> Result<bool, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+    let session_dir = session_dir_from_source(root, source, session_id)?;
+    let mut state = read_state_for_session(&session_dir, session_id)?;
+    state["title"] = Value::String(title.to_string());
+    state["titleKind"] = Value::String("custom".to_string());
+    state["isCustomTitle"] = Value::Bool(true);
+    let bytes = serde_json::to_vec(&state)
+        .map_err(|error| format!("Failed to encode Kimi Code session metadata: {error}"))?;
+    crate::config::atomic_write_private(&session_dir.join("state.json"), &bytes)
+        .map_err(|error| format!("Failed to write Kimi Code session metadata: {error}"))?;
+    mark_session_dirty(root, session_id);
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn write_session(root: &Path, workspace: &str, id: &str) -> (PathBuf, PathBuf) {
+        let dir = root.join(workspace).join(id);
+        std::fs::create_dir_all(dir.join("agents/main")).unwrap();
+        let wire = dir.join("agents/main/wire.jsonl");
+        std::fs::write(&wire, "").unwrap();
+        std::fs::write(
+            dir.join("state.json"),
+            serde_json::json!({
+                "id": id,
+                "version": 2,
+                "cwd": "/tmp/project",
+                "title": "Old title",
+                "titleKind": "generated",
+                "isCustomTitle": false,
+                "lastPrompt": "hello",
+                "createdAt": 1780000000000_i64,
+                "updatedAt": 1780000001000_i64,
+                "archived": false
+            })
+            .to_string(),
+        )
+        .unwrap();
+        (dir, wire)
+    }
+
+    #[test]
+    fn delete_session_removes_the_directory_and_updates_native_indexes() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let (dir, wire) = write_session(&root, "wd_project", "session_test-id");
+        let history_dir = temp.path().join("file-history");
+        std::fs::create_dir_all(&history_dir).unwrap();
+        std::fs::write(
+            history_dir.join("wd_project"),
+            serde_json::json!({"sessions":[{"id":"session_test-id","touchedAt":1}]}).to_string(),
+        )
+        .unwrap();
+
+        assert!(delete_session(&root, &wire, "session_test-id").unwrap());
+        assert!(!dir.exists());
+
+        let index = std::fs::read_to_string(temp.path().join("session_index.jsonl")).unwrap();
+        assert!(index.contains("\"sessionId\":\"session_test-id\""));
+        assert!(index.contains("\"deleted\":true"));
+
+        let dirty = std::fs::read_dir(root.join(".index-dirty"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(dirty
+            .iter()
+            .any(|name| name.starts_with("session_test-id.")));
+
+        let history: Value =
+            serde_json::from_slice(&std::fs::read(history_dir.join("wd_project")).unwrap())
+                .unwrap();
+        assert_eq!(history["sessions"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn delete_session_rejects_a_mismatched_session_id() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let (dir, wire) = write_session(&root, "wd_project", "session_test-id");
+
+        assert!(delete_session(&root, &wire, "session_other").is_err());
+        assert!(dir.exists());
+    }
+
+    #[test]
+    fn delete_session_rejects_a_source_outside_the_root() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let (dir, wire) = write_session(&root, "wd_project", "session_test-id");
+        let other_root = temp.path().join("other-sessions");
+        std::fs::create_dir_all(&other_root).unwrap();
+
+        assert!(delete_session(&other_root, &wire, "session_test-id").is_err());
+        assert!(dir.exists());
+    }
+
+    #[test]
+    fn rename_session_writes_a_custom_title_and_keeps_other_metadata() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let (dir, wire) = write_session(&root, "wd_project", "session_test-id");
+
+        assert!(rename_session(&root, &wire, "session_test-id", "  New title  ").unwrap());
+
+        let state: Value =
+            serde_json::from_slice(&std::fs::read(dir.join("state.json")).unwrap()).unwrap();
+        assert_eq!(state["title"], "New title");
+        assert_eq!(state["titleKind"], "custom");
+        assert_eq!(state["isCustomTitle"], true);
+        assert_eq!(state["lastPrompt"], "hello");
+        assert_eq!(state["updatedAt"], 1780000001000_i64);
+        assert!(root
+            .join(".index-dirty")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some());
+    }
+
+    #[test]
+    fn rename_session_rejects_an_empty_title() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let (_dir, wire) = write_session(&root, "wd_project", "session_test-id");
+
+        assert!(rename_session(&root, &wire, "session_test-id", "   ").is_err());
+    }
 
     #[test]
     fn kimi_scans_metadata_and_quotes_resume_command() {

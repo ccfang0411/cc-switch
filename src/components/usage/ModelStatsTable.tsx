@@ -1,11 +1,11 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { useModelStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -30,6 +30,7 @@ export function ModelStatsTable({
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
@@ -97,9 +98,9 @@ export function ModelStatsTable({
                   </td>
                   <td
                     className={cn(usageTable.td, "font-medium")}
-                    title={`${fmtUsd(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtUsd(stat.avgCostPerRequest, 4)}`}
+                    title={`${fmtCny(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtCny(stat.avgCostPerRequest, 4)}`}
                   >
-                    {fmtUsd(stat.totalCost, 2)}
+                    {fmtCny(stat.totalCost, 2)}
                   </td>
                   <PerformanceCells stat={stat} />
                 </tr>

@@ -1,6 +1,7 @@
 import React from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
@@ -17,6 +18,7 @@ import {
   expiredLine,
   failedLines,
   tierLine,
+  todaySpendLine,
   type QuotaLine,
 } from "@/components/quota/quotaRules";
 
@@ -55,11 +57,21 @@ function toQuotaTier(data: UsageData): QuotaTier {
   };
 }
 
+function isTodaySpendExtra(extra: string | undefined): boolean {
+  if (!extra?.startsWith("{")) return false;
+  try {
+    return JSON.parse(extra).kind === "today_spend";
+  } catch {
+    return false;
+  }
+}
+
 /** 脚本用量的一个套餐 → 一行（名字和明细进悬停说明） */
 function planLine(
   t: TFunction,
   data: UsageData,
   index: number,
+  rate: number,
 ): QuotaLine | null {
   const key = `${index}-${data.planName ?? ""}`;
   const amount = (value: number) =>
@@ -75,6 +87,9 @@ function planLine(
 
   if (data.isValid === false) {
     return expiredLine(t, data.invalidMessage || detail || undefined, key);
+  }
+  if (isTodaySpendExtra(data.extra) && data.used !== undefined) {
+    return todaySpendLine(t, data.used, rate, t("quota.todaySpendDetail"));
   }
   if (data.remaining !== undefined) {
     return balanceLine(t, {
@@ -107,6 +122,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const { rate } = useUsageCurrency();
   const display = useQuotaDisplay();
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
@@ -209,7 +225,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   }
 
   const lines = usageDataList
-    .map((data, index) => planLine(t, data, index))
+    .map((data, index) => planLine(t, data, index, rate))
     .filter((line): line is QuotaLine => line !== null);
   if (lines.length === 0) return null;
 
@@ -229,7 +245,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       className="mt-3"
       title={t("usage.planUsage")}
       rows={usageDataList.flatMap((data, index) => {
-        const line = planLine(t, data, index);
+        const line = planLine(t, data, index, rate);
         return line
           ? [
               {

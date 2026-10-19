@@ -85,6 +85,7 @@ const renderReader = (
         onCopy={onCopy}
         onOpenTerminalSettings={vi.fn()}
         onReload={vi.fn()}
+        onRename={vi.fn()}
         onDelete={vi.fn()}
       />
     </QueryClientProvider>
@@ -610,6 +611,7 @@ describe("SessionReader", () => {
           onCopy={onCopy}
           onOpenTerminalSettings={vi.fn()}
           onReload={vi.fn()}
+          onRename={vi.fn()}
           onDelete={vi.fn()}
         />
       </QueryClientProvider>,

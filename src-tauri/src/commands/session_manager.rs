@@ -216,6 +216,20 @@ pub async fn delete_sessions(
         .map_err(|e| format!("Failed to delete sessions: {e}"))
 }
 
+#[tauri::command]
+pub async fn rename_session(
+    providerId: String,
+    sessionId: String,
+    sourcePath: String,
+    title: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::rename_session(&providerId, &sessionId, &sourcePath, &title)
+    })
+    .await
+    .map_err(|e| format!("Failed to rename session: {e}"))?
+}
+
 /// 把会话导出为 Markdown 文件：由后端弹出保存对话框并写入。写入路径只能是用户在
 /// 对话框里选的位置，前端不能指定任意路径。用户取消时返回 `None`，否则返回保存路径。
 #[tauri::command]

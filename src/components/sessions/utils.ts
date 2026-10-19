@@ -40,10 +40,13 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   ],
 };
 
-/** 这些应用的删除需要同步原生索引与运行状态，交给应用本身处理。 */
+/** MCode 的删除需要同步运行状态与历史库，交给应用本身处理。 */
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) &&
-  !["mcode", "kimicode"].includes(session.providerId);
+  Boolean(session.sourcePath) && session.providerId !== "mcode";
+
+/** 目前只有 Kimi Code 的 state.json 支持安全地改写标题。 */
+export const canRenameSession = (session: SessionMeta) =>
+  session.providerId === "kimicode" && Boolean(session.sourcePath);
 
 export interface SessionProjectGroup {
   key: string;

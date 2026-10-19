@@ -168,12 +168,6 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
-    if provider_id == "kimicode" {
-        return Err(
-            "Delete this session in Kimi Code so its index and runtime state stay consistent"
-                .into(),
-        );
-    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -202,6 +196,20 @@ pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOu
     })
 }
 
+pub fn rename_session(
+    provider_id: &str,
+    session_id: &str,
+    source_path: &str,
+    title: &str,
+) -> Result<bool, String> {
+    let roots = provider_roots(provider_id)?;
+    let (root, source) = content::resolve_under_roots(provider_id, Path::new(source_path), &roots)?;
+    match provider_id {
+        "kimicode" => kimicode::rename_session(&root, &source, session_id, title),
+        _ => Err(format!("Unsupported provider: {provider_id}")),
+    }
+}
+
 fn delete_session_with_roots(
     provider_id: &str,
     session_id: &str,
@@ -220,6 +228,7 @@ fn delete_session_with_roots(
         "grokbuild" => grokbuild::delete_session(&validated_root, &validated_source, session_id),
         "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
+        "kimicode" => kimicode::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }

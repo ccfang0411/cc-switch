@@ -761,6 +761,30 @@ async fn query_provider_usage_inner(
         // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
         let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
 
+        // Kimi Code 的 DeepSeek 卡片展示今天的本地花费，而不是账户余额。
+        if app_type == AppType::KimiCode
+            && base_url.to_ascii_lowercase().contains("api.deepseek.com")
+        {
+            let spend = state
+                .db
+                .get_provider_today_spend(app_type.as_str(), provider_id)
+                .map_err(|error| format!("Failed to query today's spend: {error}"))?;
+            return Ok(crate::provider::UsageResult {
+                success: true,
+                data: Some(vec![crate::provider::UsageData {
+                    plan_name: None,
+                    remaining: None,
+                    total: None,
+                    used: Some(spend),
+                    unit: Some("$".to_string()),
+                    is_valid: Some(true),
+                    invalid_message: None,
+                    extra: Some(r#"{"kind":"today_spend"}"#.to_string()),
+                }]),
+                error: None,
+            });
+        }
+
         return crate::services::balance::get_balance(&base_url, &api_key)
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));

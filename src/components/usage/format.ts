@@ -31,6 +31,18 @@ export function fmtUsd(
   return `$${num.toFixed(digits)}`;
 }
 
+/** 将 USD 成本按给定汇率格式化为人民币；汇率由 UsageCurrencyContext 提供。 */
+export function fmtCny(
+  value: unknown,
+  digits: number,
+  rate: number,
+  fallback: string = "--",
+): string {
+  const num = parseFiniteNumber(value);
+  if (num == null || !Number.isFinite(rate) || rate <= 0) return fallback;
+  return `¥${(num * rate).toFixed(digits)}`;
+}
+
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */
 export const SPEED_MIN_OUTPUT_TOKENS = 100;
 

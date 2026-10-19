@@ -22,7 +22,7 @@
 
 </div>
 
-> **Kimi-Code-Zweig**: Updateprüfung, Hinweise und Installation für die Anwendung sind deaktiviert. Kimi-Anbieter unterstützen Tarif-, Regions- und Mehrmodellauswahl. Codex-Kontoanbieter in Kimi Code laden Modelle, Kontextfenster und Reasoning-Stufen vom offiziellen Konto-Endpunkt; Nutzer wählen Modelle und ein Standardmodell. Kimi-Sitzungen können gelesen, durchsucht und fortgesetzt werden; das Löschen erfolgt in Kimi selbst.
+> **Kimi-Code-Zweig**: Updateprüfung, Hinweise und Installation für die Anwendung sind deaktiviert. Kimi-Anbieter unterstützen Tarif-, Regions- und Mehrmodellauswahl. Codex-Kontoanbieter in Kimi Code laden Modelle, Kontextfenster und Reasoning-Stufen vom offiziellen Konto-Endpunkt; Nutzer wählen Modelle und ein Standardmodell. Kimi-Sitzungen können gelesen, durchsucht, fortgesetzt, umbenannt und gelöscht werden.
 
 ## ❤️Sponsoren
 

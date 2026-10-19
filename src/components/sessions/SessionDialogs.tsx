@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -6,6 +7,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { SessionMeta } from "@/types";
 import {
@@ -62,6 +64,11 @@ export function SessionDeleteDialog({
       case "grokbuild":
         return t("sessionManager.consequenceGrok", {
           defaultValue: "删除这个会话的整个目录。",
+        });
+      case "kimicode":
+        return t("sessionManager.consequenceKimicode", {
+          defaultValue:
+            "删除整个会话目录（聊天记录、工具输出与日志），并从 Kimi Code 的会话索引中移除。若会话正在 Kimi Code 中打开，建议先关闭。",
         });
       default:
         return t("sessionManager.consequenceGeneric", {
@@ -158,6 +165,99 @@ export function SessionDeleteDialog({
                     defaultValue: "删除 {{count}} 个会话",
                     count: list.length,
                   })}
+            </Button>
+          </div>
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+}
+
+interface SessionRenameDialogProps {
+  target: SessionMeta | null;
+  pending: boolean;
+  onConfirm: (title: string) => void;
+  onCancel: () => void;
+}
+
+/** 重命名：只改 state.json 里的标题，会话内容与时间不变。 */
+export function SessionRenameDialog({
+  target,
+  pending,
+  onConfirm,
+  onCancel,
+}: SessionRenameDialogProps) {
+  const { t } = useTranslation();
+  const [title, setTitle] = useState("");
+
+  useEffect(() => {
+    setTitle(target ? formatSessionTitle(target) : "");
+  }, [target]);
+
+  const trimmed = title.trim();
+  const canSave = Boolean(target) && trimmed.length > 0 && !pending;
+
+  return (
+    <Dialog
+      open={Boolean(target)}
+      onOpenChange={(open) => {
+        if (!open && !pending) onCancel();
+      }}
+    >
+      {target && (
+        <DialogContent zIndex="alert" className={dialogClass}>
+          <div className="flex flex-col gap-1.5">
+            <DialogTitle className="text-title text-fg-1 [overflow-wrap:anywhere]">
+              {t("sessionManager.renameTitle", {
+                defaultValue: "重命名会话",
+              })}
+            </DialogTitle>
+            <DialogDescription className="text-body text-fg-2">
+              {t("sessionManager.renameDescription", {
+                defaultValue: "只修改会话标题，聊天记录和其他内容不变。",
+              })}
+            </DialogDescription>
+          </div>
+          <Input
+            autoFocus
+            value={title}
+            aria-label={t("sessionManager.renameTitle", {
+              defaultValue: "重命名会话",
+            })}
+            placeholder={t("sessionManager.renamePlaceholder", {
+              defaultValue: "输入新的会话标题",
+            })}
+            onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && canSave) {
+                event.preventDefault();
+                onConfirm(trimmed);
+              }
+            }}
+          />
+          {trimmed.length === 0 && (
+            <p className="m-0 text-caption text-fg-2">
+              {t("sessionManager.renameEmpty", {
+                defaultValue: "标题不能为空",
+              })}
+            </p>
+          )}
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <Button
+              variant="neutral"
+              size="regular"
+              disabled={pending}
+              onClick={onCancel}
+            >
+              {t("common.cancel", { defaultValue: "取消" })}
+            </Button>
+            <Button
+              variant="solid"
+              size="regular"
+              disabled={!canSave}
+              onClick={() => onConfirm(trimmed)}
+            >
+              {t("sessionManager.renameAction", { defaultValue: "保存" })}
             </Button>
           </div>
         </DialogContent>

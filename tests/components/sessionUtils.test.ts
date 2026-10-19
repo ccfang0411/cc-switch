@@ -3,6 +3,7 @@ import {
   buildCdResumeCommand,
   isSessionAppId,
   canDeleteSession,
+  canRenameSession,
   SESSION_SOURCE_PATHS,
   getSessionLastText,
   getSessionTimeBucket,
@@ -14,14 +15,28 @@ import {
 import type { SessionMeta } from "@/types";
 
 describe("session utils", () => {
-  it("includes Kimi history while leaving deletion to the native app", () => {
+  it("manages Kimi history but still leaves MCode deletion to the native app", () => {
     expect(isSessionAppId("kimicode")).toBe(true);
     expect(SESSION_SOURCE_PATHS.kimicode[0]).toContain("wire.jsonl");
+    const kimi = {
+      providerId: "kimicode",
+      sessionId: "session_test",
+      sourcePath: "/tmp/kimi/sessions/wire.jsonl",
+    };
+    expect(canDeleteSession(kimi)).toBe(true);
+    expect(canRenameSession(kimi)).toBe(true);
     expect(
       canDeleteSession({
-        providerId: "kimicode",
-        sessionId: "session_test",
-        sourcePath: "/tmp/kimi/sessions/wire.jsonl",
+        providerId: "mcode",
+        sessionId: "mcode-session",
+        sourcePath: "mcode:abc",
+      }),
+    ).toBe(false);
+    expect(
+      canRenameSession({
+        providerId: "codex",
+        sessionId: "codex-session",
+        sourcePath: "/tmp/codex/session.jsonl",
       }),
     ).toBe(false);
   });

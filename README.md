@@ -22,7 +22,7 @@ English | [中文](README_ZH.md) | [日本語](README_JA.md) | [Deutsch](README_
 
 </div>
 
-> **Kimi Code branch**: Application update checks, prompts, and installation are disabled. Kimi providers offer plan, region, and multiple-model selection. Codex account providers in Kimi Code fetch available models, context windows, and reasoning levels from the official account endpoint; users select models and a default. Kimi sessions support browsing, search, and resume; delete sessions in the native Kimi interface.
+> **Kimi Code branch**: Application update checks, prompts, and installation are disabled. Kimi providers offer plan, region, and multiple-model selection. Codex account providers in Kimi Code fetch available models, context windows, and reasoning levels from the official account endpoint; users select models and a default. Kimi sessions support browsing, search, resume, rename, and deletion.
 
 ## ❤️Sponsor
 

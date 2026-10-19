@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { useRequestLogs } from "@/lib/query/usage";
 import { TablePagination } from "./TablePagination";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -15,7 +16,6 @@ import {
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
@@ -113,6 +113,7 @@ export function RequestLogTable({
   onOpenDetail,
 }: RequestLogTableProps) {
   const { t, i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
@@ -168,7 +169,9 @@ export function RequestLogTable({
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
     const providerLabel = getUsageProviderLabel(log.providerName, t);
-    const provider = providerLabel.shortLabel;
+    // Session-log rows share a placeholder provider; the full label keeps the
+    // app name visible instead of showing the generic "Session logs".
+    const provider = providerLabel.label;
     const exactTps = formatOutputTokensPerSecond(log);
     // 会话日志导入的请求没有首字计时，速度是按日志时间戳估的，前面带 ≈
     const estimatedTps =
@@ -305,7 +308,7 @@ export function RequestLogTable({
               : undefined
           }
         >
-          {unpriced ? t("usage.unpriced") : fmtUsd(log.totalCostUsd, 4)}
+          {unpriced ? t("usage.unpriced") : fmtCny(log.totalCostUsd, 4)}
         </td>
         <td
           className={cn(usageTable.td, tps == null && usageTable.muted)}

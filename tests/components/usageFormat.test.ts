@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
+  fmtCny,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
   formatOutputTokensPerSecond,
@@ -16,6 +17,14 @@ import {
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
+  it("formats USD amounts as CNY at the provided daily rate", () => {
+    expect(fmtCny(1, 2, 6.69)).toBe("¥6.69");
+    expect(fmtCny(0.92, 2, 7.14)).toBe("¥6.57");
+    expect(fmtCny(0.067, 4, 7.14)).toBe("¥0.4784");
+    expect(fmtCny(null, 2, 6.69)).toBe("--");
+    expect(fmtCny(1, 2, 0)).toBe("--");
+  });
+
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");

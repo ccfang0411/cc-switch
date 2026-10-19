@@ -57,7 +57,7 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("usage.speedValue:65")).toBeInTheDocument();
     expect(screen.getByText("3.2s")).toBeInTheDocument();
     expect(screen.getByText("26.4s")).toBeInTheDocument();
-    expect(screen.getByText("$0.0670")).toBeInTheDocument();
+    expect(screen.getByText("¥0.4784")).toBeInTheDocument();
   });
 
   it("explains why short outputs have no speed", () => {

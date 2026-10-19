@@ -387,6 +387,7 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
+         WHEN '_kimicode_session' THEN 'Kimi Code (Session)' \
          WHEN '_pi_session' THEN 'Pi (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
@@ -481,7 +482,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         dedup_app_type_match_sql("proxy_dedup.app_type", &format!("{log_alias}.app_type"));
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session', 'kimicode_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -519,7 +520,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
 
 /// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
 const DEDUP_SESSION_SOURCES_SQL: &str =
-    "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
+    "'session_log', 'codex_session', 'gemini_session', 'opencode_session', 'kimicode_session'";
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
@@ -1061,6 +1062,28 @@ impl Database {
         let result = conn.query_row(&sql, param_refs.as_slice(), usage_summary_from_row)?;
 
         Ok(result)
+    }
+
+    /// 某个供应商在今天（本地时区）的花费汇总，供供应商卡片的「当日花费」使用。
+    pub fn get_provider_today_spend(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+    ) -> Result<f64, AppError> {
+        let conn = lock_conn!(self.conn);
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs l
+             WHERE l.app_type = ?1
+               AND l.provider_id = ?2
+               AND date(l.created_at, 'unixepoch', 'localtime') = date('now', 'localtime')
+               AND {filter}"
+        );
+        conn.query_row(&sql, rusqlite::params![app_type, provider_id], |row| {
+            row.get::<_, f64>(0)
+        })
+        .map_err(|error| AppError::Database(format!("查询当日花费失败: {error}")))
     }
 
     /// 单个会话的用量汇总（会话阅读页头部）：总 Token 和花费的口径同 Dashboard。
@@ -5391,6 +5414,128 @@ mod tests {
         assert_eq!(stats[0].provider_id, "_opencode_session");
         assert_eq!(stats[0].provider_name, "OpenCode (Session)");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_labels_kimicode_session_provider() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "kimicode-session",
+                "kimicode",
+                "_kimicode_session",
+                "deepseek-flash",
+                "kimicode_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("kimicode"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "_kimicode_session");
+        assert_eq!(stats[0].provider_name, "Kimi Code (Session)");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_stats_resolves_kimicode_session_provider_row() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+                 ('deepseek', 'kimicode', 'DeepSeek', '{}')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "kimicode-deepseek",
+                "kimicode",
+                "deepseek",
+                "deepseek-flash",
+                "kimicode_session",
+                1000,
+                100,
+                50,
+                0,
+                0,
+                200,
+                "0.01",
+            )?;
+        }
+
+        let stats = db.get_provider_stats(None, None, Some("kimicode"), None, None)?;
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].provider_id, "deepseek");
+        assert_eq!(stats[0].provider_name, "DeepSeek");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_provider_today_spend_sums_only_today_and_provider() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let today_noon = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .expect("valid noon")
+            .and_local_timezone(chrono::Local)
+            .unwrap()
+            .timestamp();
+
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, app, provider, ts, cost) in [
+                ("today-1", "kimicode", "deepseek", today_noon, "0.50"),
+                ("today-2", "kimicode", "deepseek", today_noon + 60, "0.25"),
+                (
+                    "yesterday",
+                    "kimicode",
+                    "deepseek",
+                    today_noon - 86400,
+                    "1.00",
+                ),
+                (
+                    "other-provider",
+                    "kimicode",
+                    "kimi-code",
+                    today_noon,
+                    "2.00",
+                ),
+                ("other-app", "codex", "deepseek", today_noon, "3.00"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    app,
+                    provider,
+                    "deepseek-flash",
+                    "proxy",
+                    ts,
+                    1,
+                    1,
+                    0,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+        }
+
+        let spend = db.get_provider_today_spend("kimicode", "deepseek")?;
+        assert!((spend - 0.75).abs() < 1e-9, "unexpected spend: {spend}");
         Ok(())
     }
 

@@ -145,7 +145,7 @@ describe("UsageDashboard (smoke)", () => {
     );
 
     // 指标卡
-    expect(await screen.findByText("$42.10")).toBeInTheDocument();
+    expect(await screen.findByText("¥300.59")).toBeInTheDocument();
     expect(screen.getByText("18.2M")).toBeInTheDocument();
     // 「全部」时由各应用的 token 重新算：16.6M ÷ (1M + 0.2M + 16.6M)
     expect(screen.getByText("93.3%")).toBeInTheDocument();

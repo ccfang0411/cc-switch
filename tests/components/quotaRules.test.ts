@@ -11,6 +11,7 @@ import {
   pickLines,
   resetCreditsLine,
   tierLine,
+  todaySpendLine,
   toneForLeft,
 } from "@/components/quota/quotaRules";
 
@@ -22,6 +23,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
     "quota.tierUsed": "{{labelSp}}已用 {{value}}%",
     "quota.used": "已用 {{value}}%",
     "quota.balance": "余额 {{value}}",
+    "quota.todaySpend": "当日花费 {{value}}",
     "quota.tierShort": "{{label}} {{value}}%",
     "quota.resetCredits.left": "重置剩余 {{count}} 次",
     "quota.resetCredits.short": "重置 {{count}} 次",
@@ -138,6 +140,18 @@ describe("quota lines", () => {
       text: "quota.balanceUsedUp",
       tone: "danger",
     });
+  });
+
+  it("renders today's spend as a plain, uncolored line using the given rate", () => {
+    expect(todaySpendLine(t, 0.92, 6.69, "按今天的请求成本汇总")).toMatchObject({
+      text: "当日花费 ¥6.15",
+      tone: "plain",
+      left: Infinity,
+      emphasis: "¥6.15",
+      detail: "按今天的请求成本汇总",
+    });
+    // 汇率变化时数值跟着变，证明不是写死的 7.14
+    expect(todaySpendLine(t, 1, 7.14).text).toBe("当日花费 ¥7.14");
   });
 
   it("shows a failed query as a red line plus a gray reason", () => {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { ChevronDown } from "lucide-react";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -7,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   fmtInt,
-  fmtUsd,
   formatTokensCompact,
   getLocaleFromLanguage,
   getResolvedLang,
@@ -158,6 +158,7 @@ export function UsageHero({
   compact = false,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -215,9 +216,9 @@ export function UsageHero({
             <MetricCard
               label={t("usage.totalCost")}
               value={
-                placeholder ?? (totalCost == null ? "--" : fmtUsd(totalCost, 2))
+                placeholder ?? (totalCost == null ? "--" : fmtCny(totalCost, 2))
               }
-              title={totalCost == null ? undefined : fmtUsd(totalCost, 6)}
+              title={totalCost == null ? undefined : fmtCny(totalCost, 6)}
             />
             <MetricCard
               label={t("usage.totalRequests")}

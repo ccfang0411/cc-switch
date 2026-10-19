@@ -12,6 +12,7 @@ import {
   getProviders,
   listProviders,
   listSessions,
+  renameSession,
   resetProviderState,
   setCurrentProviderId,
   ackPendingDeepLink,
@@ -202,6 +203,16 @@ export const handlers = [
     );
   }),
 
+  http.post(`${TAURI_ENDPOINT}/rename_session`, async ({ request }) => {
+    const { providerId, sessionId, sourcePath, title } = await withJson<{
+      providerId: string;
+      sessionId: string;
+      sourcePath: string;
+      title: string;
+    }>(request);
+    return success(renameSession(providerId, sessionId, sourcePath, title));
+  }),
+
   // MCP APIs
   http.post(`${TAURI_ENDPOINT}/get_mcp_config`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
@@ -272,7 +283,9 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
-  http.post(`${TAURI_ENDPOINT}/get_sync_default_profile`, () => success("Test-Device")),
+  http.post(`${TAURI_ENDPOINT}/get_sync_default_profile`, () =>
+    success("Test-Device"),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 

@@ -1497,6 +1497,7 @@ pub fn run() {
             commands::get_xai_oauth_quota,
             commands::get_coding_plan_quota,
             commands::get_balance,
+            commands::get_usd_cny_rate,
             // New MCP via config.json (SSOT)
             commands::get_mcp_config,
             commands::upsert_mcp_server_in_config,
@@ -1702,6 +1703,7 @@ pub fn run() {
             commands::export_session_markdown,
             commands::delete_session,
             commands::delete_sessions,
+            commands::rename_session,
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,

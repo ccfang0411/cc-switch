@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { SessionMeta } from "@/types";
 import {
   canDeleteSession,
+  canRenameSession,
   formatRelativeTime,
   formatSessionTitle,
   formatShortDateTime,
@@ -50,6 +51,7 @@ interface SessionItemProps {
   onCopyResume: () => void;
   onCopyId: () => void;
   onCopySource: () => void;
+  onRename: () => void;
   onDelete: () => void;
 }
 
@@ -70,6 +72,7 @@ export function SessionItem({
   onCopyResume,
   onCopyId,
   onCopySource,
+  onRename,
   onDelete,
 }: SessionItemProps) {
   const { t } = useTranslation();
@@ -83,6 +86,7 @@ export function SessionItem({
   const lastText = getSessionLastText(session);
   const archived = isArchivedSession(session);
   const deletable = canDeleteSession(session);
+  const renameable = canRenameSession(session);
   const blocked = selectionMode && !deletable;
   const hasCommand = Boolean(session.resumeCommand);
   const lastActive = session.lastActiveAt ?? session.createdAt;
@@ -105,14 +109,9 @@ export function SessionItem({
     .join("\n");
 
   const deleteReason = !deletable
-    ? t(
-        session.providerId === "kimicode"
-          ? "sessionManager.kimicodeDeleteHint"
-          : "sessionManager.mcodeDeleteHint",
-        {
-          defaultValue: "请在 MiniMax Code 中删除",
-        },
-      )
+    ? t("sessionManager.mcodeDeleteHint", {
+        defaultValue: "请在 MiniMax Code 中删除",
+      })
     : null;
 
   return (
@@ -331,6 +330,16 @@ export function SessionItem({
                   })}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                {renameable && (
+                  <DropdownMenuItem
+                    className={sessionMenuItemClass}
+                    onSelect={onRename}
+                  >
+                    {t("sessionManager.renameEllipsis", {
+                      defaultValue: "重命名…",
+                    })}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className={cn(
                     sessionMenuItemClass,

@@ -274,8 +274,29 @@ describe("RequestLogTable", () => {
             latencyMs: 0,
             createdAt: Math.floor(Date.now() / 1000),
           },
+          {
+            requestId: "r2",
+            providerId: "_kimicode_session",
+            providerName: "Kimi Code (Session)",
+            appType: "kimicode",
+            model: "deepseek-flash",
+            costMultiplier: "1",
+            inputTokens: 10,
+            outputTokens: 10,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0",
+            isStreaming: false,
+            statusCode: 200,
+            latencyMs: 0,
+            createdAt: Math.floor(Date.now() / 1000),
+          },
         ],
-        total: 1,
+        total: 2,
         page: 0,
         pageSize: 20,
       },
@@ -289,6 +310,11 @@ describe("RequestLogTable", () => {
     expect(
       screen.getByTitle("Kimi For Coding Plan Provider"),
     ).toHaveTextContent("Kimi For Coding Plan Provider");
+    // 会话日志占位供应商显示「应用 · 会话日志」，不再只显示「会话日志」
+    expect(screen.getByText("usage.sessionProvider.label")).toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.sessionProvider.short"),
+    ).not.toBeInTheDocument();
     // 应用列：短名 + 全名在悬停提示和读屏文字里
     const appCell = screen.getByTitle("Claude Code");
     expect(appCell).toHaveTextContent("Claude");

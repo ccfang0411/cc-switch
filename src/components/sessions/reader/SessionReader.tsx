@@ -144,6 +144,7 @@ export interface SessionReaderProps {
   onCopy: (text: string, message: string) => void;
   onOpenTerminalSettings: () => void;
   onReload: () => void;
+  onRename: () => void;
   onDelete: () => void;
 }
 
@@ -166,6 +167,7 @@ export function SessionReader({
   onCopy,
   onOpenTerminalSettings,
   onReload,
+  onRename,
   onDelete,
 }: SessionReaderProps) {
   const { t } = useTranslation();
@@ -751,6 +753,7 @@ export function SessionReader({
           onExportMarkdown={exportMarkdownFile}
           onOpenTerminalSettings={onOpenTerminalSettings}
           onReload={onReload}
+          onRename={onRename}
           onDelete={onDelete}
         />
         <SessionReaderToolbar

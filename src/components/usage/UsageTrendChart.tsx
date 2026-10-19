@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import {
   Bar,
   BarChart,
@@ -12,12 +13,7 @@ import {
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
-import {
-  fmtInt,
-  fmtUsd,
-  getLocaleFromLanguage,
-  parseFiniteNumber,
-} from "./format";
+import { fmtInt, getLocaleFromLanguage, parseFiniteNumber } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { UsageRangeSelection } from "@/types/usage";
 
@@ -179,6 +175,7 @@ export function UsageTrendChart({
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
+  const { fmtCny } = useUsageCurrency();
   const [metric, setMetric] = useState<TrendMetric>("tokens");
   const { startDate, endDate } = resolveUsageRange(range);
   const { data: trends, isLoading } = useUsageTrends(
@@ -218,10 +215,10 @@ export function UsageTrendChart({
         : t("usage.trend.cost");
 
   const formatMetric = (value: unknown) =>
-    metric === "cost" ? fmtUsd(value, 4) : fmtInt(value, dateLocale);
+    metric === "cost" ? fmtCny(value, 4) : fmtInt(value, dateLocale);
   const formatYTick = (value: unknown) =>
     metric === "cost"
-      ? `$${parseFiniteNumber(value) ?? 0}`
+      ? fmtCny(value, 2)
       : formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
 
   const renderTooltip = ({ active, payload }: any) => {

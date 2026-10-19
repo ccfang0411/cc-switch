@@ -18,6 +18,13 @@ export interface DeleteSessionResult extends DeleteSessionOptions {
   error?: string;
 }
 
+export interface RenameSessionOptions {
+  providerId: string;
+  sessionId: string;
+  sourcePath: string;
+  title: string;
+}
+
 /** get_session_block_content 的返回：按字符分页取工具输出 / 参数 / 思考 / diff 全文 */
 export interface BlockContent {
   text: string;
@@ -119,6 +126,16 @@ export const sessionsApi = {
     items: DeleteSessionOptions[],
   ): Promise<DeleteSessionResult[]> {
     return await invoke("delete_sessions", { items });
+  },
+
+  async rename(options: RenameSessionOptions): Promise<boolean> {
+    const { providerId, sessionId, sourcePath, title } = options;
+    return await invoke("rename_session", {
+      providerId,
+      sessionId,
+      sourcePath,
+      title,
+    });
   },
 
   async launchTerminal(options: {

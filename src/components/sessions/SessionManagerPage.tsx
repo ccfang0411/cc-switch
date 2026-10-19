@@ -19,6 +19,7 @@ import { useSessionSearch } from "@/hooks/useSessionSearch";
 import {
   piKeys,
   useDeleteSessionMutation,
+  useRenameSessionMutation,
   useSessionsQuery,
   useSettingsQuery,
 } from "@/lib/query";
@@ -46,7 +47,11 @@ import { cn } from "@/lib/utils";
 import { SessionItem, sessionMenuItemClass } from "./SessionItem";
 import { SessionReader } from "./reader/SessionReader";
 import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
-import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
+import {
+  SessionDeleteDialog,
+  SessionRenameDialog,
+  SessionSourcesDialog,
+} from "./SessionDialogs";
 import {
   canDeleteSession,
   formatRelativeTime,
@@ -158,6 +163,7 @@ export function SessionManagerPage({
   const [deleteTargets, setDeleteTargets] = useState<SessionMeta[] | null>(
     null,
   );
+  const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null);
   const deleteSourceRef = useRef<DeleteSource>("row");
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [whereOpen, setWhereOpen] = useState(false);
@@ -294,6 +300,7 @@ export function SessionManagerPage({
   );
 
   const deleteSessionMutation = useDeleteSessionMutation();
+  const renameSessionMutation = useRenameSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
 
   // 选择里去掉已经不存在的会话
@@ -576,6 +583,26 @@ export function SessionManagerPage({
     }
   };
 
+  const handleRenameConfirm = async (title: string) => {
+    const target = renameTarget;
+    if (!target?.sourcePath || renameSessionMutation.isPending) return;
+    try {
+      await renameSessionMutation.mutateAsync({
+        providerId: target.providerId,
+        sessionId: target.sessionId,
+        sourcePath: target.sourcePath,
+        title,
+      });
+    } catch {
+      // 失败的 toast 由 mutation 统一给；保留对话框让用户重试
+      return;
+    }
+    setRenameTarget(null);
+    focusSoon([
+      readerKey ? "session-reader-more" : openButtonId(getSessionKey(target)),
+    ]);
+  };
+
   const toggleGroup = (key: string) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -678,6 +705,7 @@ export function SessionManagerPage({
             }),
           )
         }
+        onRename={() => setRenameTarget(session)}
         onDelete={() => openDelete([session], "row")}
       />
     );
@@ -1043,6 +1071,7 @@ export function SessionManagerPage({
             onCopy={handleCopy}
             onOpenTerminalSettings={onOpenTerminalSettings ?? (() => undefined)}
             onReload={() => void reloadMessages()}
+            onRename={() => setRenameTarget(readerSession)}
             onDelete={() => openDelete([readerSession], "reader")}
           />
         )}
@@ -1381,6 +1410,14 @@ export function SessionManagerPage({
         pending={isDeleting}
         onConfirm={() => void handleDeleteConfirm()}
         onCancel={cancelDelete}
+      />
+      <SessionRenameDialog
+        target={renameTarget}
+        pending={renameSessionMutation.isPending}
+        onConfirm={(title) => void handleRenameConfirm(title)}
+        onCancel={() => {
+          if (!renameSessionMutation.isPending) setRenameTarget(null);
+        }}
       />
       <SessionSourcesDialog
         open={whereOpen}

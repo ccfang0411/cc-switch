@@ -493,6 +493,22 @@ export const deleteSession = (
   return true;
 };
 
+export const renameSession = (
+  providerId: string,
+  sessionId: string,
+  sourcePath: string,
+  title: string,
+) => {
+  sessionsState = sessionsState.map((session) =>
+    session.providerId === providerId &&
+    session.sessionId === sessionId &&
+    session.sourcePath === sourcePath
+      ? { ...session, title }
+      : session,
+  );
+  return true;
+};
+
 export const setSessionFixtures = (
   sessions: SessionMeta[],
   messages: Record<string, SessionMessage[]>,
