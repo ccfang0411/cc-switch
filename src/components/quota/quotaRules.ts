@@ -1,5 +1,4 @@
 import type { TFunction } from "i18next";
-import { fmtCny } from "@/components/usage/format";
 import type { QuotaTier, ResetCredits } from "@/types/subscription";
 
 /**
@@ -388,11 +387,9 @@ export function balanceLine(
 /** 当日花费：只是金额汇总，不表示额度好坏，不上色 */
 export function todaySpendLine(
   t: TFunction,
-  value: number,
-  rate: number,
+  formatted: string,
   detail?: string,
 ): QuotaLine {
-  const formatted = fmtCny(value, 2, rate);
   return {
     key: "today_spend",
     left: Infinity,

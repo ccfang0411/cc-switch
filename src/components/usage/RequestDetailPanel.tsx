@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import {
@@ -18,6 +17,7 @@ import {
   type RequestLog,
 } from "@/types/usage";
 import { cn } from "@/lib/utils";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
@@ -85,8 +85,8 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
 
 function useDetailSections(request: RequestLog) {
   const { t, i18n } = useTranslation();
-  const { fmtCny } = useUsageCurrency();
-  const usd = (value: string) => fmtCny(value, 4);
+  const { money, moneyTitle } = useMoneyFormat();
+  const usd = (value: string) => money(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const freshInput = getFreshInputTokens(request);
   const isCacheInclusive = request.inputTokens !== freshInput;
@@ -112,7 +112,7 @@ function useDetailSections(request: RequestLog) {
     {
       key: "provider",
       label: t("usage.provider"),
-      value: getUsageProviderLabel(request.providerName, t).label,
+      value: getUsageProviderLabel(request.providerName, t).shortLabel,
     },
     {
       key: "providerId",
@@ -218,7 +218,7 @@ function useDetailSections(request: RequestLog) {
     value: unpriced ? t("usage.unpriced") : usd(request.totalCostUsd),
     strong: !unpriced,
     muted: unpriced,
-    title: unpriced ? undefined : fmtCny(request.totalCostUsd, 6),
+    title: unpriced ? undefined : moneyTitle(request.totalCostUsd, 6),
   });
 
   let performance: DetailRow[];
@@ -317,6 +317,7 @@ function useDetailSections(request: RequestLog) {
 
 function RequestDetailBody({ request }: { request: RequestLog }) {
   const { t } = useTranslation();
+  const { currency } = useMoneyFormat();
   const sections = useDetailSections(request);
   return (
     <div className="flex flex-col gap-4">
@@ -325,7 +326,10 @@ function RequestDetailBody({ request }: { request: RequestLog }) {
         title={t("usage.detail.tokensTitle")}
         rows={sections.tokens}
       />
-      <DetailSection title={t("usage.detail.costTitle")} rows={sections.cost} />
+      <DetailSection
+        title={t("usage.detail.costTitle", { currency })}
+        rows={sections.cost}
+      />
       <DetailSection
         title={t("usage.detail.performance")}
         rows={sections.performance}

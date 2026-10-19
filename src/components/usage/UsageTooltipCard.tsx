@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { formatTokensShort } from "./format";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface UsageTooltipCardProps {
   heading: string;
@@ -18,7 +18,7 @@ export function UsageTooltipCard({
   cost,
 }: UsageTooltipCardProps) {
   const { t, i18n } = useTranslation();
-  const { fmtCny } = useUsageCurrency();
+  const { money } = useMoneyFormat();
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const rows = [
     {
@@ -31,7 +31,7 @@ export function UsageTooltipCard({
     },
     {
       label: t("usage.trend.cost"),
-      value: cost == null ? "--" : fmtCny(cost, 2),
+      value: cost == null ? "--" : money(cost, 2),
     },
   ];
 

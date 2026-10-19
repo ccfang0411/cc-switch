@@ -120,8 +120,10 @@ export function useSetProxyStackMember() {
     onSuccess: (notice, variables) => {
       toast.success(
         t(
-          // Codex / Kimi Code 只在启动时读配置：名单改了要重启客户端才看得到
-          variables.appType === "codex" || variables.appType === "kimicode"
+          // Codex / Kimi Code / Claude Desktop 只在启动时读配置：名单改了要重启客户端才看得到
+          variables.appType === "codex" ||
+            variables.appType === "kimicode" ||
+            variables.appType === "claude-desktop"
             ? "provider.stackSaved"
             : "provider.stackSavedLive",
           { client: getAppLabel(variables.appType) },

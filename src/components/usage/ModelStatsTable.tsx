@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useUsageCurrency } from "@/contexts/UsageCurrencyContext";
 import { useModelStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
@@ -13,6 +12,7 @@ import {
 import { usageTable } from "./usageTable";
 import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface ModelStatsTableProps {
   range: UsageRangeSelection;
@@ -30,7 +30,7 @@ export function ModelStatsTable({
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t, i18n } = useTranslation();
-  const { fmtCny } = useUsageCurrency();
+  const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
   const { data: stats, isLoading } = useModelStats(
     range,
@@ -98,9 +98,9 @@ export function ModelStatsTable({
                   </td>
                   <td
                     className={cn(usageTable.td, "font-medium")}
-                    title={`${fmtCny(stat.totalCost, 6)} · ${t("usage.avgCost")} ${fmtCny(stat.avgCostPerRequest, 4)}`}
+                    title={`${moneyTitle(stat.totalCost, 6)} · ${t("usage.avgCost")} ${money(stat.avgCostPerRequest, 4)}`}
                   >
-                    {fmtCny(stat.totalCost, 2)}
+                    {money(stat.totalCost, 2)}
                   </td>
                   <PerformanceCells stat={stat} />
                 </tr>
