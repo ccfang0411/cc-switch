@@ -40,7 +40,11 @@ const renderSidebar = (settings: Partial<Settings>) => {
   const client = createTestQueryClient();
   // 不让设置查询回头去 mock 后端重取，盖掉这里给的值
   client.setQueryDefaults(["settings"], { staleTime: Infinity });
-  client.setQueryData(["settings"], settings);
+  client.setQueryData(["settings"], {
+    ...settings,
+    // 这组用例只断言侧栏「今日」的排版，金额统一按美元，避免依赖默认汇率
+    usageDisplay: { currency: "USD", ...settings.usageDisplay },
+  });
   render(
     <QueryClientProvider client={client}>
       <Sidebar

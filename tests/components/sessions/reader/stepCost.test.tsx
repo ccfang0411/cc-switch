@@ -23,7 +23,7 @@ describe("session reader step cost", () => {
         }}
       />,
     );
-    expect(screen.getByText("$0.012")).toBeInTheDocument();
+    expect(screen.getByText("¥0.084")).toBeInTheDocument();
   });
 
   it("writes step costs into the exported markdown with the given formatter", () => {

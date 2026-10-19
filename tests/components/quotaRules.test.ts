@@ -142,16 +142,16 @@ describe("quota lines", () => {
     });
   });
 
-  it("renders today's spend as a plain, uncolored line using the given rate", () => {
-    expect(todaySpendLine(t, 0.92, 6.69, "按今天的请求成本汇总")).toMatchObject({
+  it("renders today's spend as a plain, uncolored line using the formatted amount", () => {
+    expect(todaySpendLine(t, "¥6.15", "按今天的请求成本汇总")).toMatchObject({
       text: "当日花费 ¥6.15",
       tone: "plain",
       left: Infinity,
       emphasis: "¥6.15",
       detail: "按今天的请求成本汇总",
     });
-    // 汇率变化时数值跟着变，证明不是写死的 7.14
-    expect(todaySpendLine(t, 1, 7.14).text).toBe("当日花费 ¥7.14");
+    // 金额由调用方的币种/汇率格式化，这里只负责展示
+    expect(todaySpendLine(t, "¥7.14").text).toBe("当日花费 ¥7.14");
   });
 
   it("shows a failed query as a red line plus a gray reason", () => {

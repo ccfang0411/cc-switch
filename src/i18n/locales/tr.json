@@ -665,7 +665,7 @@
         "custom": "Özel"
       },
       "remoteRootDefault": "Varsayılan: cc-switch-sync",
-      "profileDefault": "Varsayılan: varsayılan",
+      "profileDefault": "Varsayılan: {{name}} (cihaz adı)",
       "saveAndTestSuccess": "Yapılandırma kaydedildi, bağlantı tamam",
       "saveAndTestFailed": "Yapılandırma kaydedildi ancak bağlantı testi başarısız oldu: {{error}}",
       "noRemoteData": "Uzak sunucuda eşitleme verisi bulunamadı",
@@ -740,7 +740,7 @@
       "remoteRoot": "Uzak Kök Dizini",
       "remoteRootDefault": "Varsayılan: cc-switch-sync",
       "profile": "Eşitleme profili adı",
-      "profileDefault": "Varsayılan: varsayılan",
+      "profileDefault": "Varsayılan: {{name}} (cihaz adı)",
       "autoSync": "Otomatik eşitleme",
       "autoSyncHint": "Etkinleştirildiğinde, her veritabanı değişikliği otomatik bir S3 yüklemesini tetikler.",
       "enabled": "S3 Eşitlemeunu Etkinleştir",

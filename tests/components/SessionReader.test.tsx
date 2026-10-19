@@ -228,7 +228,7 @@ describe("SessionReader", () => {
         name: /执行过程/,
       });
       expect(summaries[0].textContent).toMatch(/tok/);
-      expect(summaries[0].textContent).toMatch(/\$0\.0\d+/);
+      expect(summaries[0].textContent).toMatch(/¥0\.\d+/);
     });
 
     it("Pi：小写动词与 ● 状态符", () => {

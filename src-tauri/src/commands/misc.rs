@@ -2122,14 +2122,14 @@ fn kimicode_extra_search_paths(
     home: &Path,
     kimi_code_home: Option<std::ffi::OsString>,
 ) -> Vec<std::path::PathBuf> {
-    let mut paths = Vec::new();
+    let mut paths = IndexSet::new();
     if let Some(root) = kimi_code_home.filter(|value| !value.is_empty()) {
         push_unique_path(&mut paths, std::path::PathBuf::from(root).join("bin"));
     }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut paths, home.join(".kimi-code").join("bin"));
     }
-    paths
+    paths.into_iter().collect()
 }
 
 /// 工具 id 对应的可执行文件名（Kimi Code 的 npm 包 `@moonshot-ai/kimi-code` 的 bin 是 `kimi`）。

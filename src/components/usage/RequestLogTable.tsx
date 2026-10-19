@@ -97,6 +97,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   codex: "Codex",
   gemini: "Gemini",
   grokbuild: "Grok",
+  kimicode: "Kimi",
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",

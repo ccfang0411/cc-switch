@@ -61,10 +61,10 @@ export function useModeActions(app: AppId) {
                 provider: routeName ?? "",
               }) + (app === "claude-desktop" ? restartHint : "")
             : t(
-                RESTART_TO_APPLY.has(app)
-                  ? "mode.toast.enteredStack"
-                  : app === "claude-desktop"
-                    ? "mode.toast.enteredStackDesktop"
+                app === "claude-desktop"
+                  ? "mode.toast.enteredStackDesktop"
+                  : RESTART_TO_APPLY.has(app)
+                    ? "mode.toast.enteredStack"
                     : "mode.toast.enteredStackLive",
                 { app: appName },
               ),

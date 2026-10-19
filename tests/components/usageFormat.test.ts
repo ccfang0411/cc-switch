@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   SPEED_ESTIMATE_MIN_OUTPUT_TOKENS,
   SPEED_MIN_OUTPUT_TOKENS,
-  fmtCny,
   formatEstimatedTokensPerSecond,
   formatFirstTokenSeconds,
   formatMoney,
@@ -25,14 +24,6 @@ import {
 } from "@/components/usage/format";
 
 describe("usage format helpers", () => {
-  it("formats USD amounts as CNY at the provided daily rate", () => {
-    expect(fmtCny(1, 2, 6.69)).toBe("¥6.69");
-    expect(fmtCny(0.92, 2, 7.14)).toBe("¥6.57");
-    expect(fmtCny(0.067, 4, 7.14)).toBe("¥0.4784");
-    expect(fmtCny(null, 2, 6.69)).toBe("--");
-    expect(fmtCny(1, 2, 0)).toBe("--");
-  });
-
   it("formats Traditional Chinese token units with Traditional characters", () => {
     expect(formatTokensShort(12_345, "zh-TW")).toBe("1.2 萬");
     expect(formatTokensShort(123_456_789, "zh-Hant", 2)).toBe("1.23 億");
@@ -269,9 +260,15 @@ describe("usage money formatting", () => {
 });
 
 describe("display currency", () => {
-  it("falls back to USD and the preset rate for unusable settings", () => {
-    expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
-    expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual(USD_DISPLAY);
+  it("falls back to CNY and the preset rate for unusable settings", () => {
+    expect(resolveMoneyDisplay(undefined)).toEqual({
+      currency: "CNY",
+      rate: 6.8,
+    });
+    expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual({
+      currency: "CNY",
+      rate: 6.8,
+    });
     // 汇率只在显示非美元时生效
     expect(
       resolveMoneyDisplay({ currency: "USD", exchangeRates: { CNY: 7 } }),

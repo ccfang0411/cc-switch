@@ -1,7 +1,18 @@
+import type { ReactElement } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { UsageDisplaySection } from "@/components/usage/UsageDisplaySection";
+import { createTestQueryClient } from "../utils/testQueryClient";
+
+/** 组件会读取当日汇率，测试里给一个 QueryClient（接口未命中时回落到预置汇率）。 */
+const renderSection = (ui: ReactElement) => {
+  const client = createTestQueryClient();
+  return render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+  );
+};
 
 const pickCurrency = async (
   user: ReturnType<typeof userEvent.setup>,
@@ -21,12 +32,13 @@ describe("UsageDisplaySection", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it("offers every display currency and hides the rate while showing USD", async () => {
+  it("offers every display currency and shows the CNY rate by default", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<UsageDisplaySection value={undefined} onChange={onChange} />);
+    renderSection(<UsageDisplaySection value={undefined} onChange={onChange} />);
 
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    // 本分支默认人民币：预置汇率直接显示在输入框里
+    expect(screen.getByRole("textbox")).toHaveValue("6.8");
     await user.click(
       screen.getByRole("combobox", { name: "usage.display.currency" }),
     );
@@ -50,7 +62,7 @@ describe("UsageDisplaySection", () => {
   it("rejects a bad rate and keeps the rates of other currencies", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(
+    renderSection(
       <UsageDisplaySection
         value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
         onChange={onChange}
@@ -76,7 +88,7 @@ describe("UsageDisplaySection", () => {
   it("switches the rate box to the rate saved for the picked currency", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(
+    renderSection(
       <UsageDisplaySection
         value={{ currency: "CNY", exchangeRates: { CNY: 7, EUR: 0.9 } }}
         onChange={onChange}
@@ -89,7 +101,7 @@ describe("UsageDisplaySection", () => {
   it("does not write the preset rate when it was left unchanged", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(
+    renderSection(
       <UsageDisplaySection value={{ currency: "TWD" }} onChange={onChange} />,
     );
     await user.type(screen.getByRole("textbox"), "{Enter}");
@@ -99,7 +111,7 @@ describe("UsageDisplaySection", () => {
   it("picks up to two items for the sidebar Today label", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(
+    renderSection(
       <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
     );
     const trigger = screen.getByRole("button", {
@@ -151,7 +163,7 @@ describe("UsageDisplaySection", () => {
   it("shows and hides request log columns", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn().mockResolvedValue(true);
-    render(
+    renderSection(
       <UsageDisplaySection
         value={{ currency: "CNY", requestLogColumns: { app: false } }}
         onChange={onChange}
@@ -202,7 +214,7 @@ describe("UsageDisplaySection", () => {
   it("picks the trend chart style and keeps the other display settings", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(
+    renderSection(
       <UsageDisplaySection value={{ currency: "CNY" }} onChange={onChange} />,
     );
     const trigger = screen.getByRole("combobox", {

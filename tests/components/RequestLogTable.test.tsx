@@ -328,10 +328,10 @@ describe("RequestLogTable", () => {
     expect(
       screen.getByTitle("Kimi For Coding Plan Provider"),
     ).toHaveTextContent("Kimi For Coding Plan Provider");
-    // 会话日志占位供应商显示「应用 · 会话日志」，不再只显示「会话日志」
-    expect(screen.getByText("usage.sessionProvider.label")).toBeInTheDocument();
+    // 会话日志占位供应商在应用列旁显示短名，完整说明在悬停提示里
+    expect(screen.getByText("usage.sessionProvider.short")).toBeInTheDocument();
     expect(
-      screen.queryByText("usage.sessionProvider.short"),
+      screen.queryByText("usage.sessionProvider.label"),
     ).not.toBeInTheDocument();
     // 应用列：短名 + 全名在悬停提示和读屏文字里
     const appCell = screen.getByTitle("Claude Code");

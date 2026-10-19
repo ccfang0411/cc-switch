@@ -17,12 +17,22 @@ const renderWithSettings = (settings: Partial<Settings>) => {
 };
 
 describe("useMoneyFormat", () => {
-  it("shows USD with no extra hover text by default", () => {
-    const fmt = renderWithSettings({});
+  it("shows USD when the saved display currency is USD", () => {
+    const fmt = renderWithSettings({
+      usageDisplay: { currency: "USD" },
+    });
     expect(fmt.currency).toBe("USD");
     expect(fmt.money(1.5, 2)).toBe("$1.50");
     expect(fmt.usdHint(1.5)).toBeUndefined();
     expect(fmt.moneyTitle(1.5, 6)).toBe("$1.500000");
+  });
+
+  it("defaults to CNY with the preset rate", () => {
+    const fmt = renderWithSettings({});
+    expect(fmt.currency).toBe("CNY");
+    expect(fmt.rate).toBe(6.8);
+    expect(fmt.money(1.5, 2)).toBe("¥10.20");
+    expect(fmt.usdHint(1.5)).toBe("$1.500000");
   });
 
   it("converts with the saved rate and keeps the USD value for hover", () => {

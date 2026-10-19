@@ -145,6 +145,10 @@ describe("UsageDashboard (smoke)", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    client.setQueryDefaults(["settings"], { staleTime: Infinity });
+    client.setQueryData(["settings"], {
+      usageDisplay: { currency: "USD" },
+    });
     usageApiMock.syncSessionUsage.mockImplementation(async () => {
       usageApiMock.getUsageSummaryByApp.mockResolvedValue([
         { appType: "claude", summary: { ...summary, totalCost: "43.1" } },
@@ -228,6 +232,10 @@ describe("UsageDashboard (smoke)", () => {
     const user = userEvent.setup();
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryDefaults(["settings"], { staleTime: Infinity });
+    client.setQueryData(["settings"], {
+      usageDisplay: { currency: "CNY", exchangeRates: { CNY: 7.14 } },
     });
     render(
       <QueryClientProvider client={client}>
