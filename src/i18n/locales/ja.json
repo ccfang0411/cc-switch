@@ -402,7 +402,8 @@
     }
   },
   "settings": {
-    "branchUpdatesDisabled": "独立ブランチ · アプリの更新は無効",
+    "branchUpdatesDisabled": "独立ブランチ · 自動更新は無効（手動で確認できます）",
+    "manualDownload": "インストーラーを手動でダウンロード",
     "title": "設定",
     "general": {
       "appearance": "外観",

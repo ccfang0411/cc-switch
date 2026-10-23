@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Download,
   ExternalLink,
   Github,
   Globe,
   Info,
   Loader2,
+  RefreshCw,
   Sparkles,
   Star,
   X,
@@ -17,6 +19,9 @@ import { settingsApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { WhatsNewDialog } from "@/components/WhatsNewDialog";
 import { WHATS_NEW_ENTRIES, entriesUpTo } from "@/lib/whatsNew";
+import { privateDownloadUrl } from "@/lib/updater";
+import { useUpdate } from "@/contexts/UpdateContext";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import ccswitchLogo from "@/assets/icons/logo.svg";
 
 interface AboutSectionProps {
@@ -38,17 +43,20 @@ function readStarPromptDismissed(): boolean {
 }
 
 /**
- * 设置 → 关于：版本、便携模式、项目链接。此独立分支不提供应用更新。
- * 命令行应用的安装与升级在侧栏「应用」页。
+ * 设置 → 关于：版本、便携模式、项目链接，以及手动检查 OSS 上的私有更新。
+ * 不做启动自动检查；命令行应用的安装与升级在侧栏「应用」页。
  */
 export function AboutSection({ isPortable }: AboutSectionProps) {
   const { t } = useTranslation();
+  const { hasUpdate, updateInfo, checkUpdate, resetDismiss, isChecking } =
+    useUpdate();
   // 惰性初始化自模块缓存：重挂时首帧即渲染上次的值，避免 loading 闪烁；首次挂载缓存
   // 为空则回退到原始初值（null / loading）。
   const [version, setVersion] = useState<string | null>(() => appVersionCache);
   const [isLoadingVersion, setIsLoadingVersion] = useState(
     () => appVersionCache === null,
   );
+  const [isDownloading, setIsDownloading] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [starPromptDismissed, setStarPromptDismissed] = useState(
     readStarPromptDismissed,
@@ -123,6 +131,71 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, []);
 
+  const handleCheckUpdate = useCallback(async () => {
+    if (hasUpdate) {
+      if (isPortable) {
+        try {
+          await settingsApi.openExternal(
+            privateDownloadUrl(updateInfo?.availableVersion ?? ""),
+          );
+        } catch (error) {
+          console.error("[AboutSection] Portable update failed", error);
+          toast.error(t("settings.updateFailed"), { closeButton: true });
+        }
+        return;
+      }
+
+      setIsDownloading(true);
+      try {
+        resetDismiss();
+        const installed = await settingsApi.installUpdateAndRestart();
+        if (!installed) {
+          toast.success(t("settings.upToDate"), { closeButton: true });
+        }
+      } catch (error) {
+        console.error("[AboutSection] Update failed", error);
+        toast.error(t("settings.updateFailed"), {
+          description: extractErrorMessage(error) || undefined,
+          closeButton: true,
+        });
+      } finally {
+        setIsDownloading(false);
+      }
+      return;
+    }
+
+    try {
+      const available = await checkUpdate();
+      if (!available) {
+        toast.success(t("settings.upToDate"), { closeButton: true });
+      }
+    } catch (error) {
+      console.error("[AboutSection] Check update failed", error);
+      toast.error(t("settings.checkUpdateFailed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
+    }
+  }, [
+    checkUpdate,
+    hasUpdate,
+    isPortable,
+    resetDismiss,
+    t,
+    updateInfo?.availableVersion,
+  ]);
+
+  const handleManualDownload = useCallback(async () => {
+    try {
+      await settingsApi.openExternal(
+        privateDownloadUrl(updateInfo?.availableVersion ?? ""),
+      );
+    } catch (error) {
+      console.error("[AboutSection] Manual download failed", error);
+      toast.error(t("settings.updateFailed"), { closeButton: true });
+    }
+  }, [t, updateInfo?.availableVersion]);
+
   const displayVersion = version ?? t("common.unknown");
 
   return (
@@ -151,12 +224,63 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                 {t("settings.portableMode")}
               </Badge>
             )}
+            <span>{t("settings.branchUpdatesDisabled")}</span>
           </div>
         </div>
-        <span className="text-caption text-fg-2">
-          {t("settings.branchUpdatesDisabled")}
-        </span>
+        <Button
+          type="button"
+          variant={hasUpdate ? "solid" : "neutral"}
+          size="regular"
+          onClick={handleCheckUpdate}
+          disabled={isChecking || isDownloading}
+        >
+          {isDownloading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t("settings.updating")}
+            </>
+          ) : hasUpdate ? (
+            <>
+              <Download className="h-3.5 w-3.5" />
+              {t("settings.updateTo", {
+                version: updateInfo?.availableVersion ?? "",
+              })}
+            </>
+          ) : isChecking ? (
+            <>
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              {t("settings.checking")}
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("settings.checkForUpdates")}
+            </>
+          )}
+        </Button>
       </div>
+
+      {hasUpdate && updateInfo && (
+        <div className="space-y-2 px-5 py-4 text-body">
+          <p className="font-medium text-fg-1">
+            {t("settings.updateAvailable", {
+              version: updateInfo.availableVersion,
+            })}
+          </p>
+          {updateInfo.notes && (
+            <p className="line-clamp-3 text-fg-2">{updateInfo.notes}</p>
+          )}
+          <Button
+            type="button"
+            variant="quiet"
+            size="compact"
+            onClick={handleManualDownload}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            {t("settings.manualDownload")}
+          </Button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 px-5 py-4">
         {starPromptDismissed && (

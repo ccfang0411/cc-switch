@@ -402,7 +402,8 @@
     }
   },
   "settings": {
-    "branchUpdatesDisabled": "Independent branch · App updates disabled",
+    "branchUpdatesDisabled": "Independent branch · Auto-update off; check manually",
+    "manualDownload": "Download installer manually",
     "title": "Settings",
     "general": {
       "appearance": "Appearance",

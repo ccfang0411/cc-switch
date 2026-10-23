@@ -402,7 +402,8 @@
     }
   },
   "settings": {
-    "branchUpdatesDisabled": "獨立分支 · 已關閉應用程式更新",
+    "branchUpdatesDisabled": "獨立分支 · 自動更新已關閉，可手動檢查",
+    "manualDownload": "手動下載安裝包",
     "title": "設定",
     "general": {
       "appearance": "外觀",

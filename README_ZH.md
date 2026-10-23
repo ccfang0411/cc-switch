@@ -22,13 +22,15 @@
 
 </div>
 
-> **Kimi Code 独立分支**：应用自身的更新检查、提示和安装已关闭。Kimi 供应商支持套餐、地区和多模型选择；Kimi Code 中的 Codex 账号供应商从官方账号接口获取可用模型、上下文及推理强度，用户勾选所需模型并指定默认模型。会话支持浏览、搜索、恢复、重命名和删除。
+> **Kimi Code 独立分支**：应用自身不连接官方更新源，只在「关于」页手动检查 OSS 上的私有版本；不做启动自动检查。Kimi 供应商支持套餐、地区和多模型选择；Kimi Code 中的 Codex 账号供应商从官方账号接口获取可用模型、上下文及推理强度，用户勾选所需模型并指定默认模型。会话支持浏览、搜索、恢复、重命名和删除。
 
-独立分支使用 `pnpm build:branch` 出包，版本号自动生成：`官方基础版本-kimicode.北京时间YYYYMMDDHHmmss`，并同步到应用、前端包和 Rust 包。Kimi Code 的供应商预设复用对应 Codex 模型目录，支持多选、默认模型、上下文和推理强度；没有对应目录的供应商保留原有设置。
+独立分支使用 `pnpm build:branch` 出包，版本号自动生成：`官方基础版本-kimicode.北京时间YYYYMMDDHHmmss`，并同步到应用、前端包和 Rust 包。构建会生成 Tauri 更新包（`.app.tar.gz` + `.sig`），签名私钥默认读取 `~/.tauri/cc-switch-updater.key`（可用 `TAURI_SIGNING_PRIVATE_KEY` 覆盖）；私钥只保存在本机、绝不入库，丢失后已安装的客户端将无法再收到更新。Kimi Code 的供应商预设复用对应 Codex 模型目录，支持多选、默认模型、上下文和推理强度；没有对应目录的供应商保留原有设置。
 
 Kimi Code 官方订阅供应商自动显示额度用量，支持 5 小时、周额度（套餐返回时）、月总额度及月代码额度和重置时间；可在用量设置里关闭或调整查询频率。国内和国际订阅分别查询各自区域，按量付费供应商不套用订阅额度。
 
 安装包上传：使用 Node.js 22，设置 `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` 后执行 `pnpm upload:oss`，默认上传当前版本 DMG 到 `digital-attic`（杭州）。可用 `OSS_BUCKET`、`OSS_ENDPOINT` 覆盖目标；`--file` 指定文件、`--prefix` 指定目录、`--expires` 指定链接有效秒数（默认 86400）。相同内容会跳过上传，冲突文件不会覆盖；上传后校验大小与 MD5 并返回签名下载链接。凭证仅通过环境变量传入，不写入仓库。
+
+私有版本更新：构建后执行 `pnpm publish:update --notes "版本说明"`，把更新包、签名、DMG 和 `latest.json` 上传到 OSS 的 `cc-switch-updates/` 目录（公共读）。应用「关于」页的手动「检查更新」读取该目录的 `latest.json`，下载并安装后自动重启；便携版或安装失败时提供 DMG 手动下载。自动更新仍然关闭。
 
 ## ❤️赞助商
 

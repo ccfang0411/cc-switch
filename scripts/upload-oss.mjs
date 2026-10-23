@@ -41,6 +41,8 @@ export async function uploadArtifact({
   accessKeySecret,
   prefix = "",
   expiresSeconds = 86400,
+  publicRead = false,
+  forbidOverwrite = true,
   fetchImpl = fetch,
 }) {
   if (!accessKeyId || !accessKeySecret)
@@ -93,15 +95,15 @@ export async function uploadArtifact({
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   const digest = hash.digest();
   const md5 = digest.toString("hex");
-  async function send(method, body, extra = {}) {
+  async function send(method, body, extra = {}, subresource = "") {
     const headers = { Date: new Date().toUTCString(), ...extra };
     headers.Authorization = authorization(
       method,
       headers,
-      resource,
+      resource + subresource,
       credentials,
     );
-    return fetchImpl(objectUrl, {
+    return fetchImpl(`${objectUrl}${subresource}`, {
       method,
       headers,
       body,
@@ -132,11 +134,13 @@ export async function uploadArtifact({
   }
   const existing = await send("HEAD");
   let skipped = false;
-  if (existing.ok) {
+  if (existing.ok && forbidOverwrite) {
     verify(existing);
     skipped = true;
+    await existing.body?.cancel();
   } else {
-    if (existing.status !== 404) await requireOk(existing, "查询文件");
+    if (!existing.ok && existing.status !== 404)
+      await requireOk(existing, "查询文件");
     await existing.body?.cancel();
     const response = await send("PUT", createReadStream(file), {
       "Content-Type": file.endsWith(".dmg")
@@ -145,13 +149,38 @@ export async function uploadArtifact({
       "Content-Length": String(info.size),
       "Content-MD5": digest.toString("base64"),
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(file))}`,
-      "x-oss-forbid-overwrite": "true",
+      ...(publicRead ? { "x-oss-object-acl": "public-read" } : {}),
+      ...(forbidOverwrite ? { "x-oss-forbid-overwrite": "true" } : {}),
     });
     await requireOk(response, "上传");
     await response.body?.cancel();
     const remote = await send("HEAD");
     await requireOk(remote, "校验文件");
     verify(remote);
+    await remote.body?.cancel();
+  }
+  if (publicRead && skipped) {
+    // 同名文件已存在时内容不需要重传，但对象可能还是私有的，补一次 ACL。
+    const acl = await send(
+      "PUT",
+      null,
+      { "x-oss-object-acl": "public-read" },
+      "?acl",
+    );
+    await requireOk(acl, "设置公共读");
+    await acl.body?.cancel();
+  }
+  if (publicRead) {
+    const publicReadCheck = await fetchImpl(objectUrl, {
+      headers: { Range: "bytes=0-0" },
+      redirect: "error",
+      signal: AbortSignal.timeout(30000),
+    });
+    if (publicReadCheck.status !== 200 && publicReadCheck.status !== 206)
+      throw new Error(
+        `对象未生效为公共读（HTTP ${publicReadCheck.status}），请检查桶的公共访问限制或权限`,
+      );
+    await publicReadCheck.body?.cancel();
   }
   const expires = Math.floor(Date.now() / 1000) + expiresSeconds;
   const query = new URLSearchParams({
@@ -172,6 +201,8 @@ export async function uploadArtifact({
     size: info.size,
     md5,
     skipped,
+    publicRead,
+    publicUrl: publicRead ? objectUrl : null,
     downloadUrl,
     expiresAt: new Date(expires * 1000).toISOString(),
   };
