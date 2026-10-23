@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "4.0.18-kimicode.20261023134137",
+  "version": "4.0.18-kimicode.20261023135001",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {

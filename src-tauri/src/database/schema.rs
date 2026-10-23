@@ -633,6 +633,28 @@ impl Database {
                         Self::migrate_v21_to_v22(conn)?;
                         Self::set_user_version(conn, 22)?;
                     }
+                    22 => {
+                        log::info!("迁移数据库从 v22 到 v23（补齐 Antigravity 的 MCP/Skills 列）");
+                        // 本分支旧版 v22 只有 enabled_kimicode，官方 v22 只有 enabled_agy；
+                        // 两列都补齐后再升到 v23，避免查询时缺列。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_kimicode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_agy",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 23)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -3989,7 +4011,7 @@ mod tests {
         conn.execute_batch("CREATE TABLE proxy_config (app_type TEXT PRIMARY KEY CHECK(app_type IN ('claude','codex','gemini','grokbuild')), listen_port INTEGER, max_retries INTEGER, default_cost_multiplier TEXT); INSERT INTO proxy_config VALUES ('codex', 23456, 7, '1.7');")?;
         Database::set_user_version(&conn, 21)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 22);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         let saved: (i64, i64, String) = conn.query_row("SELECT listen_port, max_retries, default_cost_multiplier FROM proxy_config WHERE app_type='codex'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         assert_eq!(saved, (23456, 7, "1.7".into()));
         assert_eq!(
@@ -4009,6 +4031,39 @@ mod tests {
                 .get::<_, i64>(0))?,
             2
         );
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_v22_to_v23_adds_agy_flags_to_legacy_fork_schema() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        // 本分支旧的 v22 数据库：已有 enabled_kimicode，但没有 enabled_agy。
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                enabled_kimicode BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO mcp_servers VALUES ('m', 1);
+            CREATE TABLE skills (
+                id TEXT PRIMARY KEY,
+                enabled_kimicode BOOLEAN NOT NULL DEFAULT 0
+            );
+            INSERT INTO skills VALUES ('s', 1);",
+        )?;
+        Database::set_user_version(&conn, 22)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            assert!(Database::has_column(&conn, table, "enabled_agy")?);
+            let row: (i64, i64) = conn.query_row(
+                &format!("SELECT enabled_kimicode, enabled_agy FROM {table}"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(row, (1, 0));
+        }
         Ok(())
     }
 

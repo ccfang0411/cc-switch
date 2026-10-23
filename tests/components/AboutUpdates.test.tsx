@@ -107,7 +107,7 @@ describe("about page private updates", () => {
       <DatabaseUpgrade
         payload={{
           db_version: 99,
-          supported_version: 22,
+          supported_version: 23,
           path: "/tmp/cc-switch.db",
         }}
       />,
