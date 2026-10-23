@@ -25,6 +25,21 @@ pub struct OssBackupResult {
     pub uploaded_at: String,
 }
 
+/// A SQL backup object listed from OSS, possibly uploaded by another host.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSqlBackup {
+    pub key: String,
+    pub profile: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub last_modified: String,
+    pub oss_path: String,
+}
+
+const MAX_REMOTE_BACKUPS: usize = 1000;
+const MAX_LIST_PAGES: usize = 10;
+
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.to_string())
 }
@@ -133,12 +148,115 @@ pub(crate) fn sql_bytes(db: &Database, file: Option<&Path>) -> Result<Vec<u8>, A
     Ok(bytes)
 }
 
+fn sql_backups_root(settings: &S3SyncSettings) -> String {
+    let root = settings.remote_root.trim().trim_matches('/');
+    if root.is_empty() {
+        "sql-backups/".to_string()
+    } else {
+        format!("{root}/sql-backups/")
+    }
+}
+
 fn backup_prefix(settings: &S3SyncSettings) -> String {
     format!(
-        "{}/sql-backups/{}",
-        settings.remote_root.trim().trim_matches('/'),
-        settings.profile.trim()
+        "{}{}",
+        sql_backups_root(settings),
+        settings.profile.trim().trim_matches('/')
     )
+}
+
+fn remote_backup_from_object(
+    settings: &S3SyncSettings,
+    bucket: &str,
+    object: s3::S3ObjectInfo,
+) -> Option<RemoteSqlBackup> {
+    let prefix = sql_backups_root(settings);
+    let relative = object.key.strip_prefix(&prefix)?;
+    let mut parts = relative.split('/');
+    let profile = parts.next()?;
+    let file_name = parts.next()?;
+    if parts.next().is_some()
+        || profile.is_empty()
+        || profile == "."
+        || profile == ".."
+        || file_name.is_empty()
+        || !file_name.to_ascii_lowercase().ends_with(".sql")
+        || object.key.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let profile = profile.to_string();
+    let file_name = file_name.to_string();
+    let key = object.key;
+    Some(RemoteSqlBackup {
+        oss_path: format!("oss://{bucket}/{key}"),
+        key,
+        profile,
+        file_name,
+        size_bytes: object.size,
+        last_modified: object.last_modified,
+    })
+}
+
+/// List SQL backups from every host under `<remote_root>/sql-backups/`.
+pub(crate) async fn list(settings: &S3SyncSettings) -> Result<Vec<RemoteSqlBackup>, AppError> {
+    let creds = credentials(settings)?;
+    let prefix = sql_backups_root(settings);
+    let mut backups = Vec::new();
+    let mut token: Option<String> = None;
+    for _ in 0..MAX_LIST_PAGES {
+        let (objects, next) = s3::list_objects(&creds, &prefix, token.as_deref(), 1000).await?;
+        for object in objects {
+            if let Some(entry) = remote_backup_from_object(settings, &creds.bucket, object) {
+                backups.push(entry);
+            }
+        }
+        if backups.len() >= MAX_REMOTE_BACKUPS {
+            break;
+        }
+        match next {
+            Some(value) => token = Some(value),
+            None => break,
+        }
+    }
+    backups.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    backups.truncate(MAX_REMOTE_BACKUPS);
+    Ok(backups)
+}
+
+fn validate_remote_key(settings: &S3SyncSettings, key: &str) -> Result<(), AppError> {
+    let prefix = sql_backups_root(settings);
+    let relative = key
+        .strip_prefix(&prefix)
+        .ok_or_else(|| invalid("只能导入 sql-backups 目录下的备份"))?;
+    let mut parts = relative.split('/');
+    let profile = parts.next().unwrap_or_default();
+    let file_name = parts.next().unwrap_or_default();
+    if parts.next().is_some()
+        || profile.is_empty()
+        || profile == "."
+        || profile == ".."
+        || file_name.is_empty()
+        || !file_name.to_ascii_lowercase().ends_with(".sql")
+        || key.chars().any(char::is_control)
+    {
+        return Err(invalid("OSS 备份路径无效"));
+    }
+    Ok(())
+}
+
+/// Download a listed backup after validating that it stays inside the SQL backup prefix.
+pub(crate) async fn download(settings: &S3SyncSettings, key: &str) -> Result<Vec<u8>, AppError> {
+    let creds = credentials(settings)?;
+    validate_remote_key(settings, key)?;
+    let (bytes, _) = s3::get_object(&creds, key, MAX_SQL_BYTES)
+        .await?
+        .ok_or_else(|| invalid("OSS 上未找到该备份文件"))?;
+    if bytes.is_empty() {
+        return Err(invalid("SQL 备份文件为空"));
+    }
+    std::str::from_utf8(&bytes).map_err(|_| invalid("SQL 文件须使用 UTF-8 编码"))?;
+    Ok(bytes)
 }
 
 fn object_key(prefix: &str) -> String {
@@ -361,5 +479,79 @@ mod tests {
             "SQL backups must not allow anonymous access"
         );
         println!("Verified private SQL backup: {}", result.oss_path);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OSS_ACCESS_KEY_ID/OSS_ACCESS_KEY_SECRET and an authorized test bucket"]
+    async fn oss_backup_real_list_and_download_smoke() {
+        let mut settings = config();
+        settings.bucket = std::env::var("OSS_BUCKET").expect("OSS_BUCKET");
+        settings.endpoint = std::env::var("OSS_ENDPOINT").expect("OSS_ENDPOINT");
+        settings.access_key_id = std::env::var("OSS_ACCESS_KEY_ID").expect("OSS_ACCESS_KEY_ID");
+        settings.secret_access_key =
+            std::env::var("OSS_ACCESS_KEY_SECRET").expect("OSS_ACCESS_KEY_SECRET");
+        settings.remote_root = "cc-switch-sync".into();
+        settings.profile = crate::settings::default_sync_profile();
+        let entries = list(&settings).await.unwrap();
+        println!("listed {} remote SQL backup(s)", entries.len());
+        assert!(!entries.is_empty(), "expected at least one SQL backup");
+        let bytes = download(&settings, &entries[0].key).await.unwrap();
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .starts_with("-- CC Switch SQLite 导出"));
+        println!("downloaded {}", entries[0].oss_path);
+    }
+
+    fn listed(key: &str, size: u64) -> s3::S3ObjectInfo {
+        s3::S3ObjectInfo {
+            key: key.into(),
+            size,
+            last_modified: "2026-10-19T06:58:05.000Z".into(),
+        }
+    }
+
+    #[test]
+    fn remote_sql_backups_only_expose_host_files_under_the_backup_prefix() {
+        let settings = config();
+        let entry = remote_backup_from_object(
+            &settings,
+            "test-bucket",
+            listed("backups/sql-backups/Other-Mac/cc-switch-backup-1.sql", 123),
+        )
+        .unwrap();
+        assert_eq!(entry.profile, "Other-Mac");
+        assert_eq!(entry.file_name, "cc-switch-backup-1.sql");
+        assert_eq!(entry.size_bytes, 123);
+        assert_eq!(
+            entry.oss_path,
+            "oss://test-bucket/backups/sql-backups/Other-Mac/cc-switch-backup-1.sql"
+        );
+
+        for key in [
+            "backups/sql-backups/",
+            "backups/sql-backups/Other-Mac/nested/cc-switch-backup.sql",
+            "backups/sql-backups/Other-Mac/notes.txt",
+            "backups/other/Other-Mac/cc-switch-backup.sql",
+            "backups/sql-backups/../cc-switch-backup.sql",
+        ] {
+            assert!(
+                remote_backup_from_object(&settings, "test-bucket", listed(key, 1)).is_none(),
+                "{key}"
+            );
+        }
+
+        assert!(validate_remote_key(
+            &settings,
+            "backups/sql-backups/Other-Mac/cc-switch-backup-1.sql"
+        )
+        .is_ok());
+        for key in [
+            "backups/sql-backups/Other-Mac/../../secret.sql",
+            "backups/sql-backups/Other-Mac/cc-switch-backup.sql.bak",
+            "backups/other/cc-switch-backup.sql",
+            "backups/sql-backups/Other-Mac/notes.txt",
+        ] {
+            assert!(validate_remote_key(&settings, key).is_err(), "{key}");
+        }
     }
 }

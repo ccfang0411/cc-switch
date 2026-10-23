@@ -582,6 +582,133 @@ pub(crate) async fn head_object(
         .map(|s| s.to_string()))
 }
 
+// ─── Bucket listing ─────────────────────────────────────────
+
+/// One object returned by a ListObjectsV2 page.
+pub(crate) struct S3ObjectInfo {
+    pub key: String,
+    pub size: u64,
+    pub last_modified: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ListBucketResult {
+    #[serde(rename = "Contents", default)]
+    contents: Vec<ListedObject>,
+    #[serde(rename = "IsTruncated", default)]
+    is_truncated: Option<String>,
+    #[serde(rename = "NextContinuationToken", default)]
+    next_continuation_token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ListedObject {
+    #[serde(rename = "Key")]
+    key: String,
+    #[serde(rename = "Size", default)]
+    size: Option<String>,
+    #[serde(rename = "LastModified", default)]
+    last_modified: Option<String>,
+}
+
+fn parse_list_response(body: &str) -> Result<(Vec<S3ObjectInfo>, Option<String>), AppError> {
+    let parsed: ListBucketResult = quick_xml::de::from_str(body).map_err(|e| {
+        AppError::localized(
+            "s3.list.parse_failed",
+            format!("解析 S3 列表响应失败: {e}"),
+            format!("Failed to parse S3 listing response: {e}"),
+        )
+    })?;
+    let objects = parsed
+        .contents
+        .into_iter()
+        .map(|entry| S3ObjectInfo {
+            key: entry.key,
+            size: entry
+                .size
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(0),
+            last_modified: entry.last_modified.unwrap_or_default(),
+        })
+        .collect();
+    let next = if parsed
+        .is_truncated
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    {
+        parsed.next_continuation_token
+    } else {
+        None
+    };
+    Ok((objects, next))
+}
+
+/// List one page of objects under `prefix` via ListObjectsV2.
+pub(crate) async fn list_objects(
+    creds: &S3Credentials,
+    prefix: &str,
+    continuation_token: Option<&str>,
+    max_keys: usize,
+) -> Result<(Vec<S3ObjectInfo>, Option<String>), AppError> {
+    let mut url = Url::parse(&build_bucket_url(creds)).map_err(|e| {
+        AppError::localized(
+            "s3.url.invalid",
+            format!("S3 URL 无效: {e}"),
+            format!("Invalid S3 URL: {e}"),
+        )
+    })?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("list-type", "2");
+        query.append_pair("prefix", prefix);
+        query.append_pair("max-keys", &max_keys.clamp(1, 1000).to_string());
+        if let Some(token) = continuation_token {
+            query.append_pair("continuation-token", token);
+        }
+    }
+
+    let client = http_client::get();
+    let body_hash = sha256_hex(b"");
+    let mut headers = reqwest::header::HeaderMap::new();
+    sign_request(
+        "GET",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
+
+    let resp = client
+        .get(url.as_str())
+        .headers(headers)
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| s3_transport_error("s3.list_failed", "列表请求", "list request", &e))?;
+    if !resp.status().is_success() {
+        return Err(s3_status_error(
+            "GET",
+            resp.status(),
+            &redact_url(url.as_str()),
+        ));
+    }
+
+    const MAX_LIST_BYTES: usize = 4 * 1024 * 1024;
+    ensure_content_length_within_limit(resp.headers(), MAX_LIST_BYTES, &redact_url(url.as_str()))?;
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| s3_transport_error("s3.list_failed", "读取列表响应", "list response", &e))?;
+    if body.len() > MAX_LIST_BYTES {
+        return Err(response_too_large_error(
+            &redact_url(url.as_str()),
+            MAX_LIST_BYTES,
+        ));
+    }
+    parse_list_response(&body)
+}
+
 // ─── Tests ───────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1049,5 +1176,39 @@ mod integration_tests {
         println!("PASS: get_object(404) returned None");
 
         println!("ALL LIVE S3 TESTS PASSED");
+    }
+
+    #[test]
+    fn parses_list_objects_v2_pages_and_continuation_tokens() {
+        let body = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name>
+  <Prefix>root/sql-backups/</Prefix>
+  <IsTruncated>true</IsTruncated>
+  <NextContinuationToken>tok+1=</NextContinuationToken>
+  <Contents>
+    <Key>root/sql-backups/Mac-A/cc-switch-backup-1.sql</Key>
+    <LastModified>2026-10-19T06:58:05.000Z</LastModified>
+    <Size>1234</Size>
+  </Contents>
+  <Contents>
+    <Key>root/sql-backups/Mac&amp;B/cc-switch-backup-2.sql</Key>
+    <LastModified>2026-10-20T07:00:00.000Z</LastModified>
+    <Size>42</Size>
+  </Contents>
+</ListBucketResult>"#;
+        let (objects, next) = parse_list_response(body).unwrap();
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].size, 1234);
+        assert_eq!(
+            objects[1].key,
+            "root/sql-backups/Mac&B/cc-switch-backup-2.sql"
+        );
+        assert_eq!(next.as_deref(), Some("tok+1="));
+
+        let empty = r#"<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>"#;
+        let (objects, next) = parse_list_response(empty).unwrap();
+        assert!(objects.is_empty());
+        assert!(next.is_none());
     }
 }

@@ -24,6 +24,7 @@ interface ImportExportSectionProps {
   onImport: () => Promise<void>;
   onExport: () => Promise<void>;
   onClear: () => void;
+  onImportSuccess?: () => void | Promise<void>;
 }
 
 export function ImportExportSection({
@@ -37,6 +38,7 @@ export function ImportExportSection({
   onImport,
   onExport,
   onClear,
+  onImportSuccess,
 }: ImportExportSectionProps) {
   const { t } = useTranslation();
 
@@ -124,6 +126,7 @@ export function ImportExportSection({
           config={s3Config}
           selectedFile={selectedFile}
           disabled={isImporting}
+          onImportSuccess={onImportSuccess}
         />
       </div>
     </section>

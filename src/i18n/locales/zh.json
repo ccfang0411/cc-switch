@@ -1100,7 +1100,20 @@
       "uploading": "上传中…",
       "verifying": "正在上传并回读校验，请稍候。",
       "success": "备份上传成功，内容校验通过（{{size}} KiB）。",
-      "failed": "OSS 备份失败：{{message}}"
+      "failed": "OSS 备份失败：{{message}}",
+      "remoteTitle": "从其它主机导入",
+      "remoteHint": "列出该 OSS 目录下所有主机的 SQL 备份；导入会覆盖当前数据库，导入前会自动备份。",
+      "remoteRefresh": "刷新远程备份",
+      "remoteLoading": "加载中…",
+      "remoteEmpty": "没有找到远程 SQL 备份。",
+      "remoteFailed": "读取远程备份失败：{{message}}",
+      "remoteImport": "导入",
+      "remoteImporting": "导入中…",
+      "remoteConfirmTitle": "导入 OSS 备份",
+      "remoteConfirmBody": "将导入 {{profile}} 的 {{file}}，覆盖当前数据库。导入前会自动备份当前配置。",
+      "remoteImportSuccess": "已导入 {{profile}} 的 {{file}}。",
+      "remoteImportFailed": "导入失败：{{message}}",
+      "localProfile": "本机"
     }
   },
   "apps": {

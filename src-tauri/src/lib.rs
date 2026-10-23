@@ -1634,6 +1634,8 @@ pub fn run() {
             // theirs: config import/export and dialogs
             commands::export_config_to_file,
             commands::upload_sql_backup_to_oss,
+            commands::list_sql_backups_from_oss,
+            commands::import_sql_backup_from_oss,
             commands::get_sync_default_profile,
             commands::import_config_from_file,
             commands::webdav_test_connection,

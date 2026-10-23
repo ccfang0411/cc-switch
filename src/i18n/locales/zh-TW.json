@@ -1101,7 +1101,20 @@
       "uploading": "上傳中…",
       "verifying": "正在上傳並回讀驗證，請稍候。",
       "success": "備份上傳成功，內容驗證通過（{{size}} KiB）。",
-      "failed": "OSS 備份失敗：{{message}}"
+      "failed": "OSS 備份失敗：{{message}}",
+      "remoteTitle": "從其他主機匯入",
+      "remoteHint": "列出此 OSS 目錄下所有主機的 SQL 備份；匯入會覆蓋目前資料庫，匯入前會自動備份。",
+      "remoteRefresh": "重新整理遠端備份",
+      "remoteLoading": "載入中…",
+      "remoteEmpty": "找不到遠端 SQL 備份。",
+      "remoteFailed": "讀取遠端備份失敗：{{message}}",
+      "remoteImport": "匯入",
+      "remoteImporting": "匯入中…",
+      "remoteConfirmTitle": "匯入 OSS 備份",
+      "remoteConfirmBody": "將匯入 {{profile}} 的 {{file}}，覆蓋目前資料庫。匯入前會自動備份目前設定。",
+      "remoteImportSuccess": "已匯入 {{profile}} 的 {{file}}。",
+      "remoteImportFailed": "匯入失敗：{{message}}",
+      "localProfile": "本機"
     }
   },
   "apps": {

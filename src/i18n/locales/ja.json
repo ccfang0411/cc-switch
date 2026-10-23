@@ -1100,7 +1100,20 @@
       "uploading": "アップロード中…",
       "verifying": "アップロードと保存内容の検証中です。",
       "success": "バックアップをアップロードし検証しました（{{size}} KiB）。",
-      "failed": "OSS バックアップに失敗しました：{{message}}"
+      "failed": "OSS バックアップに失敗しました：{{message}}",
+      "remoteTitle": "他のホストからインポート",
+      "remoteHint": "この OSS ディレクトリ内の全ホストの SQL バックアップを一覧表示します。インポートすると現在のデータベースが置き換わり、事前に自動バックアップされます。",
+      "remoteRefresh": "リモートバックアップを更新",
+      "remoteLoading": "読み込み中…",
+      "remoteEmpty": "リモート SQL バックアップが見つかりません。",
+      "remoteFailed": "リモートバックアップの取得に失敗しました：{{message}}",
+      "remoteImport": "インポート",
+      "remoteImporting": "インポート中…",
+      "remoteConfirmTitle": "OSS バックアップをインポート",
+      "remoteConfirmBody": "{{profile}} の {{file}} をインポートして現在のデータベースを置き換えます。現在の設定は事前に自動バックアップされます。",
+      "remoteImportSuccess": "{{profile}} の {{file}} をインポートしました。",
+      "remoteImportFailed": "インポートに失敗しました：{{message}}",
+      "localProfile": "このホスト"
     }
   },
   "apps": {

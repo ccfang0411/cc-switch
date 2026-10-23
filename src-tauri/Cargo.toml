@@ -68,6 +68,8 @@ thiserror = "2.0"
 anyhow = "1.0"
 zip = "2.2"
 serde_yaml = "0.9"
+# OSS/S3 ListObjectsV2 响应解析（tauri 已依赖同一版本）
+quick-xml = { version = "0.38", features = ["serialize"] }
 tempfile = "3"
 url = "2.5"
 auto-launch = "0.5"

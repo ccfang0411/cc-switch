@@ -1100,7 +1100,20 @@
       "uploading": "Uploading…",
       "verifying": "Uploading and verifying the stored content. Please wait.",
       "success": "Backup uploaded and verified ({{size}} KiB).",
-      "failed": "OSS backup failed: {{message}}"
+      "failed": "OSS backup failed: {{message}}",
+      "remoteTitle": "Import from another host",
+      "remoteHint": "Lists SQL backups from every host under this OSS directory. Importing replaces the current database and backs it up first.",
+      "remoteRefresh": "Refresh remote backups",
+      "remoteLoading": "Loading…",
+      "remoteEmpty": "No remote SQL backups found.",
+      "remoteFailed": "Failed to list remote backups: {{message}}",
+      "remoteImport": "Import",
+      "remoteImporting": "Importing…",
+      "remoteConfirmTitle": "Import OSS backup",
+      "remoteConfirmBody": "Import {{file}} from {{profile}} and replace the current database. Your current configuration is backed up first.",
+      "remoteImportSuccess": "Imported {{file}} from {{profile}}.",
+      "remoteImportFailed": "Import failed: {{message}}",
+      "localProfile": "This host"
     }
   },
   "apps": {

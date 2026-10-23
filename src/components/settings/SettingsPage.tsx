@@ -465,6 +465,7 @@ export function SettingsPage({
                   onImport={importConfig}
                   onExport={exportConfig}
                   onClear={clearSelection}
+                  onImportSuccess={onImportSuccess}
                 />
               </div>
             </SettingsBlock>

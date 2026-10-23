@@ -21,6 +21,16 @@ export interface OssSqlBackupResult {
   uploadedAt: string;
 }
 
+/** A SQL backup object listed from OSS, possibly uploaded by another host. */
+export interface OssSqlBackupEntry {
+  key: string;
+  profile: string;
+  fileName: string;
+  sizeBytes: number;
+  lastModified: string;
+  ossPath: string;
+}
+
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
@@ -171,6 +181,14 @@ export const settingsApi = {
     return await invoke("upload_sql_backup_to_oss", {
       filePath: filePath ?? null,
     });
+  },
+
+  async listSqlBackupsFromOss(): Promise<OssSqlBackupEntry[]> {
+    return await invoke("list_sql_backups_from_oss");
+  },
+
+  async importSqlBackupFromOss(key: string): Promise<ConfigTransferResult> {
+    return await invoke("import_sql_backup_from_oss", { key });
   },
 
   async getSyncDefaultProfile(): Promise<string> {
