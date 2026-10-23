@@ -986,9 +986,6 @@ export function WebdavSyncSection({
         <h3 className="text-base font-semibold text-fg-1">
           {t("settings.webdavSync.title")}
         </h3>
-        <p className="text-sm text-fg-2">
-          {t("settings.webdavSync.description")}
-        </p>
       </header>
 
       {/* ─── Sync type selector ───────────────────────────── */}
@@ -1098,9 +1095,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.webdavSync.remoteRoot")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.webdavSync.remoteRootDefault")}
-                </span>
               </label>
               <Input
                 value={form.remoteRoot}
@@ -1381,9 +1375,6 @@ export function WebdavSyncSection({
             <div className="flex items-center gap-4">
               <label className="w-40 text-xs font-medium text-fg-1 shrink-0">
                 {t("settings.s3Sync.remoteRoot")}
-                <span className="block text-badge font-normal text-fg-2">
-                  {t("settings.s3Sync.remoteRootDefault")}
-                </span>
               </label>
               <Input
                 value={s3RemoteRoot}

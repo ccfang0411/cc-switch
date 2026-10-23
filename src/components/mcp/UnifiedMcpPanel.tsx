@@ -87,6 +87,7 @@ const IMPORT_SOURCE_FILES: Record<
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
+  agy: { file: "~/.gemini/config/mcp_config.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   kimicode: { file: "~/.kimi-code/mcp.json" },
 };
@@ -96,6 +97,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set([
   "mcode",
   "pi",
   "kimicode",
+  "agy",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */

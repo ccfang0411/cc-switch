@@ -235,7 +235,7 @@ impl ProviderType {
                     return None;
                 }
             }
-            AppType::Pi | AppType::Mcode => return None,
+            AppType::Pi | AppType::Mcode | AppType::Agy => return None,
         };
         Some(provider_type)
     }
@@ -292,7 +292,7 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
         AppType::KimiCode => Box::new(KimiAdapter::new()),
-        AppType::Pi | AppType::Mcode => return None,
+        AppType::Pi | AppType::Mcode | AppType::Agy => return None,
     })
 }
 

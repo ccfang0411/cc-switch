@@ -17,6 +17,7 @@ export const SESSION_APP_IDS = [
   "openclaw",
   "mcode",
   "kimicode",
+  "agy",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -38,11 +39,14 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   kimicode: [
     "~/.kimi-code/sessions/<workspace>/<session>/agents/main/wire.jsonl",
   ],
+  agy: [
+    "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+  ],
 };
 
 /** MCode 的删除需要同步运行状态与历史库，交给应用本身处理。 */
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) && session.providerId !== "mcode";
+  Boolean(session.sourcePath) && !["mcode", "agy"].includes(session.providerId);
 
 /** 目前只有 Kimi Code 的 state.json 支持安全地改写标题。 */
 export const canRenameSession = (session: SessionMeta) =>

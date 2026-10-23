@@ -14,7 +14,7 @@ use std::time::Instant;
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    claude, codex, gemini, grokbuild, hermes, kimicode, mcode, openclaw, opencode, pi,
+    agy, claude, codex, gemini, grokbuild, hermes, kimicode, mcode, openclaw, opencode, pi,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,6 +90,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r8);
     sessions.extend(mcode::scan_sessions());
     sessions.extend(kimicode::scan_sessions());
+    sessions.extend(agy::scan_sessions());
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
@@ -119,6 +120,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
+        "agy" => agy::load_messages(path),
         "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
@@ -170,6 +172,12 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "agy" {
+        return Err(
+            "Delete this session in Antigravity to keep its binary store and summaries consistent"
+                .into(),
+        );
+    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -246,6 +254,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
         "kimicode" => kimicode::session_roots(),
+        "agy" => agy::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

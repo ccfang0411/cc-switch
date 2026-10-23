@@ -13,7 +13,8 @@ export type AppType =
   | "hermes"
   | "pi"
   | "mcode"
-  | "kimicode";
+  | "kimicode"
+  | "agy";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -28,6 +29,7 @@ export interface SkillApps {
   pi: boolean;
   mcode?: boolean;
   kimicode?: boolean;
+  agy?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */

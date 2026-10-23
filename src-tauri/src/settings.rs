@@ -55,6 +55,8 @@ pub struct VisibleApps {
     pub mcode: bool,
     #[serde(default = "default_true")]
     pub kimicode: bool,
+    #[serde(default = "default_true")]
+    pub agy: bool,
 }
 
 impl Default for VisibleApps {
@@ -71,6 +73,7 @@ impl Default for VisibleApps {
             pi: true,
             mcode: true,
             kimicode: true,
+            agy: true,
         }
     }
 }
@@ -90,6 +93,7 @@ impl VisibleApps {
             AppType::Pi => self.pi,
             AppType::Mcode => self.mcode,
             AppType::KimiCode => self.kimicode,
+            AppType::Agy => self.agy,
         }
     }
 }
@@ -484,6 +488,10 @@ pub struct AppSettings {
     /// many users do not want to chase every release).
     #[serde(default)]
     pub check_tool_updates_on_startup: bool,
+    /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
+    /// 默认关：用托盘面板，想要原生菜单在设置里换回。
+    #[serde(default)]
+    pub native_tray_menu: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -592,6 +600,9 @@ pub struct AppSettings {
     /// 当前 Kimi Code 供应商 ID（本地存储；直连切换和代理模式指针都按它）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_kimicode: Option<String>,
+    /// 当前 Antigravity CLI 供应商 ID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_agy: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -674,6 +685,7 @@ impl Default for AppSettings {
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
+            native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,
@@ -707,6 +719,7 @@ impl Default for AppSettings {
             current_provider_openclaw: None,
             current_provider_hermes: None,
             current_provider_kimicode: None,
+            current_provider_agy: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -1381,6 +1394,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::KimiCode => settings.current_provider_kimicode.clone(),
+        AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Pi | AppType::Mcode => None,
     }
 }
@@ -1401,6 +1415,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::KimiCode => settings.current_provider_kimicode = id_owned.clone(),
+        AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Pi | AppType::Mcode => {}
     })
 }
@@ -1696,6 +1711,15 @@ mod tests {
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
         );
+    }
+
+    #[test]
+    fn native_tray_menu_defaults_off_and_keeps_a_saved_menu_choice() {
+        assert!(!AppSettings::default().native_tray_menu);
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(!missing.native_tray_menu);
+        let menu: AppSettings = serde_json::from_str(r#"{"nativeTrayMenu":true}"#).unwrap();
+        assert!(menu.native_tray_menu);
     }
 
     #[test]

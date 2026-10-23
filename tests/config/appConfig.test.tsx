@@ -4,6 +4,8 @@ import {
   isProxyAppId,
   isStackAppId,
   usesEditorView,
+  SKILLS_APP_IDS,
+  MCP_APP_IDS,
 } from "@/config/appConfig";
 
 describe("appConfig provider lifecycle", () => {
@@ -14,7 +16,7 @@ describe("appConfig provider lifecycle", () => {
     },
   );
 
-  it.each(["claude", "claude-desktop", "codex", "gemini", "grokbuild"])(
+  it.each(["claude", "claude-desktop", "codex", "gemini", "grokbuild", "agy"])(
     "does not classify %s as additive",
     (appId) => {
       expect(isAdditiveAppId(appId)).toBe(false);
@@ -30,12 +32,17 @@ describe("appConfig proxy capability", () => {
     },
   );
 
-  it.each(["claude-desktop", "opencode", "openclaw", "hermes", "pi", "mcode"])(
-    "does not classify %s as proxy-capable",
-    (appId) => {
-      expect(isProxyAppId(appId)).toBe(false);
-    },
-  );
+  it.each([
+    "claude-desktop",
+    "opencode",
+    "openclaw",
+    "hermes",
+    "pi",
+    "mcode",
+    "agy",
+  ])("does not classify %s as proxy-capable", (appId) => {
+    expect(isProxyAppId(appId)).toBe(false);
+  });
 
   it.each(["claude", "codex", "kimicode"])(
     "classifies %s as stack-capable",
@@ -44,7 +51,7 @@ describe("appConfig proxy capability", () => {
     },
   );
 
-  it.each(["gemini", "grokbuild", "mcode", "pi"])(
+  it.each(["gemini", "grokbuild", "mcode", "pi", "agy"])(
     "does not classify %s as stack-capable",
     (appId) => {
       expect(isStackAppId(appId)).toBe(false);
@@ -56,5 +63,15 @@ describe("appConfig proxy capability", () => {
     expect(isProxyAppId("kimicode")).toBe(true);
     expect(isStackAppId("kimicode")).toBe(true);
     expect(usesEditorView("kimicode")).toBe(true);
+  });
+});
+
+// Antigravity shares management UI, but has independent configuration and no CCS proxy.
+describe("Antigravity capabilities", () => {
+  it("supports skills and MCP with direct provider switching", () => {
+    expect(SKILLS_APP_IDS).toContain("agy");
+    expect(MCP_APP_IDS).toContain("agy");
+    expect(isAdditiveAppId("agy")).toBe(false);
+    expect(isProxyAppId("agy")).toBe(false);
   });
 });
