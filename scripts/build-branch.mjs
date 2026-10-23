@@ -60,6 +60,19 @@ if (!signingKeyPath && !signingKeyContent) {
   );
   process.exit(1);
 }
+// 公钥抄错一个字符就会让所有客户端验签失败，构建前必须逐字符比对。
+if (signingKeyPath && existsSync(`${signingKeyPath}.pub`)) {
+  const expectedPubkey = readFileSync(`${signingKeyPath}.pub`, "utf8").trim();
+  const configuredPubkey = JSON.parse(
+    readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8"),
+  )?.plugins?.updater?.pubkey?.trim();
+  if (configuredPubkey !== expectedPubkey) {
+    console.error(
+      "tauri.conf.json 的 plugins.updater.pubkey 与签名私钥不匹配，构建已中止。",
+    );
+    process.exit(1);
+  }
+}
 const env = {
   ...process.env,
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
