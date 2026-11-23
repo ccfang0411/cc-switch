@@ -117,36 +117,25 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
     )
     .or_else(|| Some("Codex".to_string()));
 
-    let context_window = obj
-        .get("context_window")
-        .or_else(|| obj.get("contextWindow"))
-        .and_then(Value::as_u64)
-        .filter(|n| *n > 0);
-    let supported_reasoning_efforts = obj
-        .get("supported_reasoning_levels")
-        .or_else(|| obj.get("supported_reasoning_efforts"))
-        .and_then(Value::as_array)
-        .map(|levels| {
-            let mut result = Vec::new();
-            for level in levels {
-                if let Some(effort) = level
-                    .as_str()
-                    .or_else(|| level.get("effort").and_then(Value::as_str))
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    if !result.iter().any(|s| s == effort) {
-                        result.push(effort.to_string());
-                    }
-                }
-            }
-            result
-        });
     models.push(FetchedModel {
         id,
         owned_by,
-        context_window,
-        supported_reasoning_efforts,
+        context_window: obj.get("context_window").and_then(Value::as_u64),
+        supported_reasoning_efforts: obj
+            .get("supported_reasoning_levels")
+            .or_else(|| obj.get("supported_reasoning_efforts"))
+            .and_then(Value::as_array)
+            .map(|levels| {
+                levels
+                    .iter()
+                    .filter_map(|level| {
+                        level
+                            .as_str()
+                            .or_else(|| level.get("effort").and_then(Value::as_str))
+                    })
+                    .map(str::to_string)
+                    .collect()
+            }),
         default_reasoning_effort: string_field(
             obj,
             &["default_reasoning_level", "default_reasoning_effort"],
@@ -180,29 +169,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn official_model_metadata_preserves_context_and_reasoning_levels() {
-        let models = parse_models(json!({"models": [{
-            "slug": "account-model", "display_name": "Account Model",
-            "context_window": 987654,
-            "supported_reasoning_levels": [
-                {"effort":"low"}, {"effort":"high"}, {"effort":"ultra"}, {"effort":"high"}
-            ],
-            "default_reasoning_level": "high"
-        }]}));
-        assert_eq!(models[0].context_window, Some(987654));
-        assert_eq!(
-            models[0].supported_reasoning_efforts.as_ref().unwrap(),
-            &["low", "high", "ultra"]
-        );
-        assert_eq!(models[0].default_reasoning_effort.as_deref(), Some("high"));
-        assert_eq!(models[0].display_name.as_deref(), Some("Account Model"));
-        let plain = parse_models(json!({"models": ["id-only"]}));
-        assert!(plain[0].context_window.is_none());
-        assert!(plain[0].supported_reasoning_efforts.is_none());
-    }
-
-    #[test]
-    fn codex_oauth_model_discovery_uses_gpt6_compatible_identity() {
+    fn codex_oauth_model_discovery_uses_current_client_identity() {
         let request = build_models_request(&reqwest::Client::new(), "test-token", "test-account")
             .build()
             .unwrap();
@@ -220,9 +187,8 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // GPT-6.1 Sol is absent from the 0.155.0 catalog for this account; the
-        // catalog gate sits above the model's advertised minimal_client_version.
-        assert!(parts.as_slice() >= [0, 159, 0].as_slice());
+        // The catalog gate can exceed a model's advertised minimal_client_version.
+        assert!(parts.as_slice() >= [0, 169, 0].as_slice());
         assert_eq!(request.headers()["version"], version);
         let models = parse_models(json!({"models": [
             {"slug": "gpt-6.1-sol", "minimal_client_version": "0.153.0"},
@@ -230,6 +196,19 @@ mod tests {
         ]}));
         assert_eq!(models[0].id, "gpt-6-sol");
         assert_eq!(models[1].id, "gpt-6.1-sol");
+    }
+
+    #[test]
+    fn parse_codex_oauth_models_preserves_gpt_6_2_astra() {
+        let models = parse_models(json!({
+            "models": [
+                { "slug": "gpt-6.2-astra", "display_name": "GPT-6.2 Astra" }
+            ]
+        }));
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-6.2-astra");
+        assert_eq!(models[0].owned_by.as_deref(), Some("Codex"));
     }
 
     #[test]

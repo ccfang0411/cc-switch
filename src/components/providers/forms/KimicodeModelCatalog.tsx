@@ -247,7 +247,7 @@ export function KimicodeModelCatalog({
               </div>
             </div>
             <Label htmlFor={`kimi-catalog-context-${index}`}>
-              {t("opencode.limitContext")}
+              {t("kimi.contextSize")}
             </Label>
             <Input
               id={`kimi-catalog-context-${index}`}

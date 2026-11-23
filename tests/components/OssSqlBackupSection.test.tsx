@@ -213,6 +213,47 @@ describe("OSS SQL backup", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a successful import visible while reporting post-import sync warnings", async () => {
+    vi.mocked(settingsApi.listSqlBackupsFromOss).mockResolvedValue([
+      remoteBackup,
+    ]);
+    vi.mocked(settingsApi.importSqlBackupFromOss).mockResolvedValue({
+      success: true,
+      message: "ok",
+      backupId: "backup-before-import",
+      warning: "MCP synchronization failed",
+    });
+    render(
+      <OssSqlBackupSection config={config} disabled={false} selectedFile="" />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.ossSqlBackup.remoteRefresh",
+      }),
+    );
+    await screen.findByText("Other-Mac");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.ossSqlBackup.remoteImport",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "settings.ossSqlBackup.remoteImport",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "MCP synchronization failed",
+      ),
+    );
+    expect(
+      screen.getByText("settings.ossSqlBackup.remoteImportSuccess"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("backup-before-import")).toBeInTheDocument();
+  });
+
   it("shows remote listing and import failures", async () => {
     vi.mocked(settingsApi.listSqlBackupsFromOss).mockRejectedValue(
       new Error("AccessDenied"),

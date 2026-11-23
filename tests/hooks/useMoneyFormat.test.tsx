@@ -6,9 +6,14 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { Settings } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
-const renderWithSettings = (settings: Partial<Settings>) => {
+const renderWithSettings = (
+  settings: Partial<Settings>,
+  dailyRate?: number,
+) => {
   const client = createTestQueryClient();
   client.setQueryData(["settings"], settings);
+  if (dailyRate != null)
+    client.setQueryData(["usdCnyRate"], { rate: dailyRate });
   return renderHook(() => useMoneyFormat(), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -33,6 +38,31 @@ describe("useMoneyFormat", () => {
     expect(fmt.rate).toBe(6.8);
     expect(fmt.money(1.5, 2)).toBe("¥10.20");
     expect(fmt.usdHint(1.5)).toBe("$1.500000");
+  });
+
+  it("keeps daily CNY conversion for legacy settings", () => {
+    expect(renderWithSettings({}, 7.14).rate).toBe(7.14);
+  });
+
+  it("honors the explicit rate source even when a daily CNY rate is cached", () => {
+    expect(
+      renderWithSettings(
+        { usageDisplay: { currency: "CNY", rateSource: "manual" } },
+        7.14,
+      ).rate,
+    ).toBe(6.8);
+    expect(
+      renderWithSettings(
+        {
+          usageDisplay: {
+            currency: "CNY",
+            rateSource: "auto",
+            autoExchangeRates: { CNY: 7.2 },
+          },
+        },
+        7.14,
+      ).rate,
+    ).toBe(7.2);
   });
 
   it("converts with the saved rate and keeps the USD value for hover", () => {

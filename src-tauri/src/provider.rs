@@ -4,6 +4,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::provider_kind::ProviderKind;
+
+pub(crate) fn parse_billing_multiplier(raw: &str) -> Result<rust_decimal::Decimal, String> {
+    let raw = raw.trim();
+    let syntax_ok = !raw.is_empty() && raw.bytes().all(|c| c.is_ascii_digit() || c == b'.');
+    raw.parse::<rust_decimal::Decimal>()
+        .ok()
+        .filter(|v| {
+            syntax_ok
+                && *v >= rust_decimal::Decimal::ZERO
+                && *v <= rust_decimal::Decimal::from(1000)
+        })
+        .ok_or_else(|| "Billing multiplier must be a decimal from 0 to 1000.".to_string())
+}
+
+pub(crate) fn billing_multiplier(provider: &Provider) -> rust_decimal::Decimal {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.billing_multiplier.as_deref())
+        .and_then(|raw| parse_billing_multiplier(raw).ok())
+        .unwrap_or(rust_decimal::Decimal::ONE)
+}
+
 // SSOT 模式：不再写供应商副本文件
 
 /// 供应商结构体
@@ -43,7 +67,17 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// `category` 是否标着官方卡。这是唯一比较 `"official"` 的地方；各应用的
+/// `is_official*` 在此之外还各有自己的认法。
+pub fn is_official_category(category: Option<&str>) -> bool {
+    category == Some("official")
+}
+
 impl Provider {
+    pub fn has_official_category(&self) -> bool {
+        is_official_category(self.category.as_deref())
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,
@@ -68,16 +102,15 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.provider_type() == Some("codex_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::CodexOAuth)
     }
 
     pub fn is_xai_oauth(&self) -> bool {
-        self.provider_type() == Some("xai_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::XaiOAuth)
     }
 
     pub fn is_github_copilot(&self) -> bool {
-        self.provider_type() == Some("github_copilot")
-            || self.claude_base_url_contains("githubcopilot.com")
+        ProviderKind::of(self) == Some(ProviderKind::GitHubCopilot)
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
@@ -108,10 +141,6 @@ impl Provider {
             .unwrap_or(false)
     }
 
-    fn provider_type(&self) -> Option<&str> {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
-    }
-
     /// The stored OpenCode source format; only native declarations record one.
     pub fn opencode_config_format(&self) -> Option<OpenCodeConfigFormat> {
         self.meta.as_ref().and_then(|m| m.opencode_config_format)
@@ -132,6 +161,12 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    pub(crate) fn kimi_connection(&self) -> &Value {
+        self.settings_config
+            .get("provider")
+            .unwrap_or(&self.settings_config)
+    }
+
     /// Enable subscription quota queries for existing and newly added Kimi rows.
     /// Explicit user configuration, including a disabled query, always wins.
     pub(crate) fn ensure_kimi_subscription_usage(&mut self) -> bool {
@@ -144,7 +179,7 @@ impl Provider {
             || self.is_github_copilot()
             || self.is_xai_oauth()
             || self
-                .settings_config
+                .kimi_connection()
                 .get("base_url")
                 .and_then(Value::as_str)
                 .and_then(crate::services::coding_plan::kimi_usage_url)
@@ -253,35 +288,74 @@ impl Provider {
                 (base_url, api_key)
             }
             // Hermes (config.yaml) flattens credentials at the top level, snake_case.
+            // Copilot CLI 自带模型卡：provider 节点（旧版环境变量形状兜底）。
+            AppType::Copilot => {
+                let converted = crate::copilot_config::convert_legacy_settings(settings);
+                let provider = converted.as_ref().unwrap_or(settings).get("provider");
+                (
+                    str_at(provider.and_then(|p| p.get("baseUrl"))),
+                    first_non_empty(provider, &["apiKey", "bearerToken"]),
+                )
+            }
+            AppType::Dsh => (
+                str_at(settings.pointer("/options/baseURL")),
+                str_at(settings.pointer("/options/apiKey")),
+            ),
+            AppType::Kimi => {
+                let connection = self.kimi_connection();
+                (
+                    str_at(connection.get("base_url")),
+                    connection
+                        .get("api_key")
+                        .and_then(Value::as_str)
+                        .filter(|key| !key.trim().is_empty())
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            connection
+                                .get("api_key_env")
+                                .and_then(Value::as_str)
+                                .and_then(|name| std::env::var(name).ok())
+                        })
+                        .unwrap_or_default(),
+                )
+            }
             AppType::Hermes => (
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
-            ),
-            AppType::KimiCode => (
-                str_at(settings.get("base_url")),
-                settings
-                    .get("api_key")
-                    .and_then(Value::as_str)
-                    .filter(|key| !key.trim().is_empty())
-                    .map(str::to_owned)
-                    .or_else(|| {
-                        settings
-                            .get("api_key_env")
-                            .and_then(Value::as_str)
-                            .and_then(|name| std::env::var(name).ok())
-                    })
-                    .unwrap_or_default(),
             ),
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
-            // Pi custom providers use the native models.json field names.
+            // Pi custom providers use the native models.json field names. Pi expands
+            // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
-                str_at(settings.get("apiKey")),
+                crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // WorkBuddy models.json: shared `url` / `apiKey`, or per-model overrides.
+            AppType::WorkBuddy => {
+                let first_model = settings
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .and_then(|models| models.first());
+                let pick = |field: &str| {
+                    let shared = str_at(settings.get(field));
+                    if shared.is_empty() {
+                        str_at(first_model.and_then(|model| model.get(field)))
+                    } else {
+                        shared
+                    }
+                };
+                let url = pick("url");
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, pick("apiKey"))
+            }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
@@ -307,6 +381,12 @@ impl Provider {
                 );
                 (base_url, api_key)
             }
+            // Oh My Pi custom providers use the models.yml field names. omp reads `apiKey` as
+            // an environment variable name first, so resolve it before sending.
+            AppType::Omp => (
+                crate::omp_config::provider_base_url(settings).unwrap_or_default(),
+                crate::omp_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
+            ),
         };
 
         // Normalize like the JS-script path (extract_base_url_from_provider) so a
@@ -559,6 +639,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// Explicit opt-in multiplier for future proxy cost estimates. Legacy costMultiplier remains inert.
+    #[serde(rename = "billingMultiplier", skip_serializing_if = "Option::is_none")]
+    pub billing_multiplier: Option<String>,
     /// 已停用：供应商级成本倍率。新版不再读取，只为与旧版设备同步时原样往返保留
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
@@ -612,6 +695,14 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Claude 路由经 OpenAI Chat / Responses 转发时怎么发思考档位。
+    /// 缺省 = 自动（见 `proxy::providers::claude_reasoning`）；"off"（不发）/
+    /// "passthrough"（原样发）为用户覆盖，其余值按缺省处理。
+    #[serde(
+        rename = "claudeReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_reasoning_effort: Option<String>,
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.
@@ -968,7 +1059,6 @@ impl UniversalProvider {
             r#"model_provider = "custom"
 model = "{model}"
 model_reasoning_effort = "{reasoning_effort}"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "NewAPI"
@@ -1808,6 +1898,17 @@ mod tests {
                 "sk-pi".to_string()
             )
         );
+    }
+
+    #[test]
+    fn resolve_credentials_pi_never_sends_key_references_literally() {
+        for reference in ["$CC_SWITCH_TEST_UNSET_8822", "!echo sk-from-command"] {
+            let p = provider_with(json!({
+                "baseUrl": "https://api.example.com/v1",
+                "apiKey": reference,
+            }));
+            assert_eq!(p.resolve_usage_credentials(&AppType::Pi).1, "");
+        }
     }
 
     #[test]

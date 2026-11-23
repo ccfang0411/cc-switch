@@ -30,7 +30,7 @@ pub fn kimi_api_format(provider: &Provider) -> &'static str {
         return super::get_claude_api_format(provider);
     }
     match provider
-        .settings_config
+        .kimi_connection()
         .get("type")
         .and_then(JsonValue::as_str)
         .unwrap_or("anthropic")
@@ -54,7 +54,7 @@ impl KimiAdapter {
     /// 保证两者恰好其一）。
     fn extract_key(&self, provider: &Provider) -> Option<String> {
         if let Some(key) = provider
-            .settings_config
+            .kimi_connection()
             .get("api_key")
             .and_then(|v| v.as_str())
             .map(str::trim)
@@ -63,7 +63,7 @@ impl KimiAdapter {
             return Some(key.to_string());
         }
         provider
-            .settings_config
+            .kimi_connection()
             .get("api_key_env")
             .and_then(|v| v.as_str())
             .map(str::trim)
@@ -90,9 +90,9 @@ impl ProviderAdapter for KimiAdapter {
             return super::ClaudeAdapter::new().extract_base_url(provider);
         }
         if let Some(url) = provider
-            .settings_config
+            .kimi_connection()
             .get("base_url")
-            .or_else(|| provider.settings_config.get("baseURL"))
+            .or_else(|| provider.kimi_connection().get("baseURL"))
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|url| !url.is_empty())
@@ -115,7 +115,7 @@ impl ProviderAdapter for KimiAdapter {
         let strategy = match kimi_api_format(provider) {
             "anthropic" => AuthStrategy::Anthropic,
             "gemini_native" => match provider
-                .settings_config
+                .kimi_connection()
                 .get("type")
                 .and_then(JsonValue::as_str)
             {

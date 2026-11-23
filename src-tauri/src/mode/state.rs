@@ -10,6 +10,7 @@
 //!
 //! 文件是设备本地的（0600，不同步），路径见 [`DeviceStore`]。
 
+use crate::sync_utils::MutexExt;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
@@ -309,7 +310,19 @@ pub fn load(store: &DeviceStore) -> Result<LiveState, AppError> {
         Err(source) => return Err(AppError::io(&path, source)),
     };
     match serde_json::from_slice::<LiveState>(&bytes) {
-        Ok(state) => Ok(state),
+        Ok(mut state) => {
+            if let Some(legacy) = state.apps.remove("kimicode") {
+                if state
+                    .apps
+                    .get("kimi")
+                    .is_some_and(|current| current != &legacy)
+                {
+                    return Err(AppError::Conflict("live-state.json contains conflicting kimi and kimicode state; refusing to discard either".into()));
+                }
+                state.apps.insert("kimi".into(), legacy);
+            }
+            Ok(state)
+        }
         Err(err) => {
             let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
             let aside = path.with_file_name(format!("live-state.json.corrupt-{stamp}"));
@@ -334,7 +347,7 @@ pub fn update<R>(
     store: &DeviceStore,
     change: impl FnOnce(&mut LiveState) -> R,
 ) -> Result<R, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     let mut state = load(store)?;
     let result = change(&mut state);
     state.apps.retain(|_, app| !app.is_empty());
@@ -343,7 +356,7 @@ pub fn update<R>(
 }
 
 pub fn pending(store: &DeviceStore, app: &str) -> Result<Option<Pending>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -366,7 +379,7 @@ pub fn mode_states<const N: usize>(
     store: &DeviceStore,
     apps: [&str; N],
 ) -> Result<[ModeState; N], AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     let state = load(store)?;
     Ok(apps.map(|app| {
         state
@@ -384,7 +397,7 @@ pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError>
 
 /// 这个应用的写入记录；`None` 表示新版还没写过。
 pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -393,7 +406,7 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
 
 /// 这个应用的 Stack 模型（成员和 key 登记簿）。
 pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -403,7 +416,7 @@ pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着），状态文件只读一次。
 pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -412,7 +425,7 @@ pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
 
 /// 有未完成操作的应用。
 pub fn apps_with_pending(store: &DeviceStore) -> Result<Vec<String>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .into_iter()
@@ -477,6 +490,54 @@ mod tests {
             raw,
             json!({"version": 2, "future": true, "apps": {"codex": {"mode": "proxy"}}})
         );
+    }
+
+    #[test]
+    fn kimi_legacy_state_keeps_mode_stack_pending_and_unknown_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DeviceStore::at(dir.path());
+        let legacy = json!({"mode":"proxy","attached":true,"proxy_route":"vendor","stack":{"enabled":true,"members":["vendor"],"keys":{"stable":"vendor"},"future":"keep"},"pending":sample_pending(),"future":{"keep":true}});
+        fs::write(
+            store.state_path(),
+            json!({"version":1,"apps":{"kimicode":legacy},"future":true}).to_string(),
+        )
+        .unwrap();
+        let state = load(&store).unwrap();
+        assert_eq!(serde_json::to_value(&state.apps["kimi"]).unwrap(), legacy);
+        assert!(!state.apps.contains_key("kimicode"));
+        update(&store, |_| ()).unwrap();
+        let saved: Value = serde_json::from_slice(&fs::read(store.state_path()).unwrap()).unwrap();
+        assert_eq!(saved["apps"]["kimi"], legacy);
+        assert!(saved["apps"].get("kimicode").is_none());
+        assert_eq!(saved["future"], true);
+    }
+
+    #[test]
+    fn kimi_conflicting_legacy_state_is_not_discarded_or_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DeviceStore::at(dir.path());
+        let bytes = json!({"version":1,"apps":{"kimicode":{"mode":"proxy","proxy_route":"legacy"},"kimi":{"mode":"direct","proxy_route":"native"}}}).to_string();
+        fs::write(store.state_path(), &bytes).unwrap();
+        assert!(matches!(load(&store), Err(AppError::Conflict(_))));
+        assert!(update(&store, |_| ()).is_err());
+        assert_eq!(fs::read_to_string(store.state_path()).unwrap(), bytes);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn identical_kimi_state_aliases_merge_without_losing_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DeviceStore::at(dir.path());
+        let app = json!({"mode":"proxy","proxy_route":"same","future":true});
+        fs::write(
+            store.state_path(),
+            json!({"version":1,"apps":{"kimicode":app,"kimi":app}}).to_string(),
+        )
+        .unwrap();
+        update(&store, |_| ()).unwrap();
+        let state = load(&store).unwrap();
+        assert_eq!(state.apps.len(), 1);
+        assert_eq!(serde_json::to_value(&state.apps["kimi"]).unwrap(), app);
     }
 
     #[test]

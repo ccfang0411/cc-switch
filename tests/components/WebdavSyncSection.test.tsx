@@ -76,12 +76,19 @@ vi.mock("@/components/ui/dialog", () => ({
 
 const { settingsApiMock } = vi.hoisted(() => ({
   settingsApiMock: {
-    getSyncDefaultProfile: vi.fn().mockResolvedValue("My-Mac"),
+    getSyncDefaultProfile: vi.fn().mockResolvedValue("Test-Device"),
     webdavTestConnection: vi.fn(),
     webdavSyncSaveSettings: vi.fn(),
     webdavSyncFetchRemoteInfo: vi.fn(),
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
+    webdavSyncClearSettings: vi.fn(),
+    s3TestConnection: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
+    s3SyncFetchRemoteInfo: vi.fn(),
+    s3SyncUpload: vi.fn(),
+    s3SyncDownload: vi.fn(),
+    s3SyncClearSettings: vi.fn(),
   },
 }));
 
@@ -94,6 +101,19 @@ const baseConfig: WebDavSyncSettings = {
   baseUrl: "https://dav.example.com/dav/",
   username: "alice",
   password: "secret",
+  remoteRoot: "cc-switch-sync",
+  profile: "default",
+  autoSync: false,
+  status: {},
+};
+
+const baseS3Config: S3SyncSettings = {
+  enabled: true,
+  region: "us-east-1",
+  bucket: "my-bucket",
+  accessKeyId: "AKIDEXAMPLE",
+  secretAccessKey: "s3-secret",
+  endpoint: "",
   remoteRoot: "cc-switch-sync",
   profile: "default",
   autoSync: false,
@@ -116,29 +136,39 @@ function renderSection(config?: WebDavSyncSettings, s3Config?: S3SyncSettings) {
 }
 
 describe("WebdavSyncSection", () => {
-  it("defaults new WebDAV and S3 profiles to the device name", async () => {
-    const first = renderSection();
+  it("uses the device name for new sync profiles", async () => {
+    renderSection();
     await waitFor(() =>
       expect(screen.getByLabelText("settings.webdavSync.profile")).toHaveValue(
-        "My-Mac",
+        "Test-Device",
       ),
     );
-    first.unmount();
-    renderSection(undefined, { enabled: true });
-    await waitFor(() =>
-      expect(screen.getByLabelText("settings.s3Sync.profile")).toHaveValue(
-        "My-Mac",
-      ),
+    fireEvent.change(screen.getAllByTestId("webdav-preset-select")[0], {
+      target: { value: "s3" },
+    });
+    expect(screen.getByLabelText("settings.s3Sync.profile")).toHaveValue(
+      "Test-Device",
     );
   });
 
-  it("keeps a saved profile when the device default arrives", async () => {
-    renderSection({ ...baseConfig, profile: "my-existing-profile" });
+  it("preserves an existing default profile when the device name arrives", async () => {
+    renderSection(baseConfig);
     await waitFor(() =>
-      expect(settingsApiMock.getSyncDefaultProfile).toHaveBeenCalled(),
+      expect(
+        screen.getByLabelText("settings.webdavSync.profile"),
+      ).toHaveAttribute("placeholder", "Test-Device"),
     );
     expect(screen.getByLabelText("settings.webdavSync.profile")).toHaveValue(
-      "my-existing-profile",
+      "default",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.webdavSync.save" }),
+    );
+    await waitFor(() =>
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ profile: "default" }),
+        false,
+      ),
     );
   });
 
@@ -152,8 +182,24 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockReset();
     settingsApiMock.webdavSyncUpload.mockReset();
     settingsApiMock.webdavSyncDownload.mockReset();
+    settingsApiMock.webdavSyncClearSettings.mockReset();
+    settingsApiMock.webdavSyncClearSettings.mockResolvedValue({
+      success: true,
+    });
+    settingsApiMock.s3TestConnection.mockReset();
+    settingsApiMock.s3SyncSaveSettings.mockReset();
+    settingsApiMock.s3SyncFetchRemoteInfo.mockReset();
+    settingsApiMock.s3SyncUpload.mockReset();
+    settingsApiMock.s3SyncDownload.mockReset();
+    settingsApiMock.s3SyncClearSettings.mockReset();
+    settingsApiMock.s3SyncClearSettings.mockResolvedValue({ success: true });
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
+    settingsApiMock.s3TestConnection.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
+    settingsApiMock.s3SyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
       success: true,
       message: "ok",
@@ -213,6 +259,148 @@ describe("WebdavSyncSection", () => {
     expect(
       screen.queryByText("settings.webdavSync.autoSyncLastErrorTitle"),
     ).not.toBeInTheDocument();
+  });
+
+  it("hides the clear button when nothing is saved", () => {
+    renderSection(undefined);
+
+    expect(
+      screen.queryByRole("button", { name: "settings.webdavSync.clear" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the saved config after confirmation and empties the form", async () => {
+    renderSection(baseConfig);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.webdavSync.clear" }),
+    );
+    expect(settingsApiMock.webdavSyncClearSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.webdavSync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncClearSettings).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.webdavSync.clearSuccess",
+      );
+    });
+    expect(
+      screen.queryByDisplayValue("https://dav.example.com/dav/"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("alice")).not.toBeInTheDocument();
+    expect(settingsApiMock.webdavSyncSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not refill the form from the stale config after clearing unsaved edits", async () => {
+    const view = renderSection(baseConfig);
+    // The refetch resolves before the parent settings form passes the
+    // cleared config down; the prop only changes afterwards.
+    vi.spyOn(view.client, "invalidateQueries").mockResolvedValue(undefined);
+
+    fireEvent.change(screen.getByDisplayValue("alice"), {
+      target: { value: "bob" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.webdavSync.clear" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.webdavSync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.webdavSync.clearSuccess",
+      );
+    });
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection config={undefined} />
+      </QueryClientProvider>,
+    );
+    expect(
+      screen.queryByDisplayValue("https://dav.example.com/dav/"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("alice")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("bob")).not.toBeInTheDocument();
+  });
+
+  it("hides the S3 clear button when no bucket is saved", () => {
+    renderSection(undefined, { enabled: true });
+
+    expect(
+      screen.queryByRole("button", { name: "settings.s3Sync.clear" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the saved S3 config after confirmation and empties the form", async () => {
+    renderSection(undefined, baseS3Config);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.clear" }),
+    );
+    expect(settingsApiMock.s3SyncClearSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncClearSettings).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.s3Sync.clearSuccess",
+      );
+    });
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("AKIDEXAMPLE")).not.toBeInTheDocument();
+    expect(settingsApiMock.s3SyncSaveSettings).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncClearSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not refill the S3 form from the stale config after clearing unsaved edits", async () => {
+    const view = renderSection(undefined, baseS3Config);
+    // The refetch resolves before the parent settings form passes the
+    // cleared config down; the prop only changes afterwards.
+    vi.spyOn(view.client, "invalidateQueries").mockResolvedValue(undefined);
+
+    fireEvent.change(screen.getByDisplayValue("my-bucket"), {
+      target: { value: "other-bucket" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.clear" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.s3Sync.clearSuccess",
+      );
+    });
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection s3Config={undefined} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("other-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("AKIDEXAMPLE")).not.toBeInTheDocument();
   });
 
   it("shows validation error when saving without base url", async () => {
@@ -528,7 +716,7 @@ describe("WebdavSyncSection", () => {
       );
     });
 
-    fireEvent.change(screen.getByDisplayValue("default"), {
+    fireEvent.change(screen.getByLabelText("settings.webdavSync.profile"), {
       target: { value: "new-profile" },
     });
     fireEvent.click(
@@ -614,6 +802,104 @@ describe("WebdavSyncSection", () => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.downloadFailed",
       );
+    });
+  });
+
+  describe("S3 provider preset", () => {
+    const baseS3Config: S3SyncSettings = {
+      enabled: true,
+      autoSync: false,
+      region: "auto",
+      bucket: "cc-switch",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      remoteRoot: "cc-switch-sync",
+      profile: "default",
+      status: {},
+    };
+
+    // Sync-type selector comes first, S3 preset selector second.
+    const s3PresetSelect = () =>
+      screen.getAllByTestId("webdav-preset-select")[1] as HTMLSelectElement;
+
+    it("shows the saved R2 preset instead of falling back to AWS S3", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-r2");
+    });
+
+    it.each([
+      ["https://oss-cn-hangzhou.aliyuncs.com", "s3-oss"],
+      ["https://cos.ap-guangzhou.myqcloud.com", "s3-cos"],
+      ["https://obs.cn-north-4.myhuaweicloud.com", "s3-obs"],
+      ["https://minio.internal:9000", "s3-custom"],
+    ])("restores the preset for %s", (endpoint, expected) => {
+      renderSection(undefined, { ...baseS3Config, endpoint });
+
+      expect(s3PresetSelect().value).toBe(expected);
+    });
+
+    it("uses AWS S3 when the endpoint is empty", () => {
+      renderSection(undefined, { ...baseS3Config, endpoint: "" });
+
+      expect(s3PresetSelect().value).toBe("aws-s3");
+    });
+
+    it("keeps an explicit preset that the endpoint cannot be inferred from", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://minio.internal:9000",
+        preset: "s3-minio",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-minio");
+    });
+
+    it("falls back to the endpoint when the saved preset is unknown", () => {
+      renderSection(undefined, {
+        ...baseS3Config,
+        endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+        preset: "s3-from-a-newer-version",
+      });
+
+      expect(s3PresetSelect().value).toBe("s3-oss");
+    });
+
+    it("saves the selected preset so it survives reopening", async () => {
+      renderSection(undefined, baseS3Config);
+
+      fireEvent.change(s3PresetSelect(), { target: { value: "s3-minio" } });
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.s3Sync.save" }),
+      );
+
+      await waitFor(() => {
+        expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledWith(
+          expect.objectContaining({ preset: "s3-minio" }),
+          false,
+        );
+      });
+    });
+
+    it("repopulates the preset when the saved config arrives later", () => {
+      const view = renderSection(undefined, undefined);
+
+      view.rerender(
+        <QueryClientProvider client={view.client}>
+          <WebdavSyncSection
+            s3Config={{
+              ...baseS3Config,
+              endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+              preset: "s3-oss",
+            }}
+          />
+        </QueryClientProvider>,
+      );
+
+      expect(s3PresetSelect().value).toBe("s3-oss");
     });
   });
 });

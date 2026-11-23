@@ -27,6 +27,7 @@ vi.mock("@tanstack/react-virtual", () => ({
         key: index,
         start: index * 100,
       })),
+    measure: () => undefined,
     measureElement: () => undefined,
     scrollToIndex: () => undefined,
   }),
@@ -41,7 +42,7 @@ const renderPage = () => {
   });
   return render(
     <QueryClientProvider client={client}>
-      <SessionManagerPage appId="kimicode" />
+      <SessionManagerPage appId="kimi" />
     </QueryClientProvider>,
   );
 };
@@ -57,7 +58,7 @@ describe("SessionRename", () => {
     const now = Date.now();
     const sessions: SessionMeta[] = [
       {
-        providerId: "kimicode",
+        providerId: "kimi",
         sessionId: "session-kimi-1",
         title: "Kimi Session",
         summary: "Kimi summary",
@@ -69,7 +70,7 @@ describe("SessionRename", () => {
       },
     ];
     setSessionFixtures(sessions, {});
-    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, kimicode: true } });
+    setSettings({ visibleApps: { ...DEFAULT_VISIBLE_APPS, kimi: true } });
   });
 
   it("renames a Kimi Code session from the row menu", async () => {
@@ -93,7 +94,7 @@ describe("SessionRename", () => {
 
     await waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
     expect(rename).toHaveBeenCalledWith({
-      providerId: "kimicode",
+      providerId: "kimi",
       sessionId: "session-kimi-1",
       sourcePath: "/mock/kimi/session-kimi-1/agents/main/wire.jsonl",
       title: "Renamed Session",

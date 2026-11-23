@@ -26,6 +26,8 @@ import ccswitchLogo from "@/assets/icons/logo.svg";
 
 interface AboutSectionProps {
   isPortable: boolean;
+  autoUpdateEnabled?: boolean;
+  onAutoSave?: (updates: { autoUpdateEnabled: boolean }) => Promise<boolean>;
 }
 
 // 应用自身版本（getVersion，本地毫秒级、无网络）也缓存一份，纯为重挂时免去 loading 闪烁。
@@ -279,6 +281,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             <ExternalLink className="h-3.5 w-3.5" />
             {t("settings.manualDownload")}
           </Button>
+          {isPortable && (
+            <p className="text-fg-2">{t("settings.portableUpdateHint")}</p>
+          )}
         </div>
       )}
 
@@ -325,8 +330,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         )}
       </div>
 
-      {/* 下载与更新都走 ccswitch.io，用户不再经过仓库页，邀 Star 单独占一行；按钮即 GitHub 入口。
-          关掉后链接行补回 GitHub 按钮 */}
+      {/* 关闭邀请后，在链接行保留 GitHub 入口。 */}
       {!starPromptDismissed && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-action-soft py-3.5 ps-5 pe-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">

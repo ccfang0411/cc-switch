@@ -84,6 +84,42 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 
+  it("includes Kimi managed bindings in account deletion warnings", () => {
+    const kimi = byId(
+      provider("kimi-bound", {
+        meta: {
+          providerType: "codex_oauth",
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "account-1",
+          },
+        },
+      }),
+      provider("kimi-default", { meta: { providerType: "codex_oauth" } }),
+      provider(
+        "kimi-native",
+        {},
+        { provider: { type: "kimi", oauth: { key: "oauth/kimi-code" } } },
+      ),
+    );
+    const users = findManagedAccountUsers(
+      "codex_oauth",
+      ["account-1"],
+      "account-1",
+      { kimi },
+    );
+    expect(
+      users.map((user) => [user.appId, user.providerId, user.viaDefault]),
+    ).toEqual([
+      ["kimi", "kimi-bound", false],
+      ["kimi", "kimi-default", true],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "kimi", names: ["kimi-bound", "kimi-default"] },
+    ]);
+  });
+
   it("does not count an unbound Codex official card (it uses Codex's own login)", () => {
     const codex = byId(
       provider(
@@ -126,30 +162,32 @@ describe("findManagedAccountUsers", () => {
   });
 });
 
-it("includes Kimi Code bindings in account removal impact", () => {
-  const users = findManagedAccountUsers("codex_oauth", ["kimi-account"], null, {
-    kimicode: byId(
-      provider("kimi-chatgpt", {
+describe("findManagedAccountUsers — WorkBuddy", () => {
+  it("counts official sign-in cards bound to the account, never via default", () => {
+    const card = (id: string, accountId: string) =>
+      provider(id, {
+        category: "official",
         meta: {
-          providerType: "codex_oauth",
           authBinding: {
             source: "managed_account",
-            authProvider: "codex_oauth",
-            accountId: "kimi-account",
+            authProvider: "workbuddy_account",
+            accountId,
           },
         },
-      }),
-    ),
+      });
+    const workbuddy = byId(
+      card("wb-a", "u-1"),
+      card("wb-b", "u-2"),
+      provider("custom"),
+    );
+    const users = findManagedAccountUsers("workbuddy_account", ["u-1"], "u-1", {
+      workbuddy,
+    });
+    expect(users.map((u) => [u.appId, u.providerId, u.viaDefault])).toEqual([
+      ["workbuddy", "wb-a", false],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "workbuddy", names: ["wb-a"] },
+    ]);
   });
-  expect(users).toEqual([
-    {
-      appId: "kimicode",
-      providerId: "kimi-chatgpt",
-      name: "kimi-chatgpt",
-      viaDefault: false,
-    },
-  ]);
-  expect(groupUsersByApp(users)).toEqual([
-    { appId: "kimicode", names: ["kimi-chatgpt"] },
-  ]);
 });

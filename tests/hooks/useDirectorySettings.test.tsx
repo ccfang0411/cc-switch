@@ -73,7 +73,8 @@ describe("useDirectorySettings", () => {
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
       if (app === "pi") return "/remote/pi";
-      if (app === "kimicode") return "/remote/kimicode";
+      if (app === "omp") return "/remote/omp";
+      if (app === "dsh") return "/remote/dsh";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -99,7 +100,8 @@ describe("useDirectorySettings", () => {
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
       pi: "/remote/pi",
-      kimicode: "/remote/kimicode",
+      omp: "/remote/omp",
+      dsh: "/remote/dsh",
     });
   });
 
@@ -112,6 +114,7 @@ describe("useDirectorySettings", () => {
     ["openclaw", "openclawConfigDir"],
     ["hermes", "hermesConfigDir"],
     ["pi", "piConfigDir"],
+    ["dsh", "dshConfigDir"],
   ] as const)(
     "syncs the %s display when form drafts are discarded",
     async (app, field) => {
@@ -348,32 +351,47 @@ describe("useDirectorySettings", () => {
     );
   });
 
-  it("resets directories to computed defaults", async () => {
-    const { result } = renderHook(() =>
-      useDirectorySettings({
-        settings: createSettings({
-          claudeConfigDir: "/custom/claude",
-          codexConfigDir: "/custom/codex",
+  it.each([
+    ["claude", "claudeConfigDir", "/home/mock/.claude"],
+    ["codex", "codexConfigDir", "/home/mock/.codex"],
+    ["gemini", "geminiConfigDir", "/home/mock/.gemini"],
+    ["grokbuild", "grokConfigDir", "/home/mock/.grok"],
+    ["opencode", "opencodeConfigDir", "/home/mock/.config/opencode"],
+    ["openclaw", "openclawConfigDir", "/home/mock/.openclaw"],
+    ["hermes", "hermesConfigDir", "/home/mock/.hermes"],
+    ["pi", "piConfigDir", "/home/mock/.pi/agent"],
+    ["omp", "ompConfigDir", "/home/mock/.omp/agent"],
+    ["dsh", "dshConfigDir", "/home/mock/.dsh"],
+  ] as const)(
+    "resets the %s directory to its default under home",
+    async (app, field, expected) => {
+      const { result } = renderHook(() =>
+        useDirectorySettings({
+          settings: createSettings({ [field]: "/custom/dir" }),
+          onUpdateSettings,
         }),
-        onUpdateSettings,
-      }),
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.resetDirectory(app);
+      });
+
+      expect(onUpdateSettings).toHaveBeenCalledWith({ [field]: undefined });
+      expect(result.current.resolvedDirs[app]).toBe(expected);
+    },
+  );
+
+  it("resets the app config directory to its default under home", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({ settings: createSettings(), onUpdateSettings }),
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.resetDirectory("claude");
-      await result.current.resetDirectory("codex");
       await result.current.resetAppConfigDir();
     });
 
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      claudeConfigDir: undefined,
-    });
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      codexConfigDir: undefined,
-    });
-    expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
-    expect(result.current.resolvedDirs.codex).toBe("/home/mock/.codex");
     expect(result.current.resolvedDirs.appConfig).toBe("/home/mock/.cc-switch");
   });
 
@@ -398,38 +416,6 @@ describe("useDirectorySettings", () => {
       openclawConfigDir: "/picked/openclaw",
     });
     expect(result.current.resolvedDirs.openclaw).toBe("/picked/openclaw");
-  });
-
-  it("updates kimicode directory when browsing and resets to the .kimi-code default", async () => {
-    selectConfigDirectoryMock.mockResolvedValue("/picked/kimicode");
-
-    const { result } = renderHook(() =>
-      useDirectorySettings({
-        settings: createSettings({ kimicodeConfigDir: undefined }),
-        onUpdateSettings,
-      }),
-    );
-
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-
-    await act(async () => {
-      await result.current.browseDirectory("kimicode");
-    });
-
-    expect(selectConfigDirectoryMock).toHaveBeenCalledWith("/remote/kimicode");
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      kimicodeConfigDir: "/picked/kimicode",
-    });
-    expect(result.current.resolvedDirs.kimicode).toBe("/picked/kimicode");
-
-    await act(async () => {
-      await result.current.resetDirectory("kimicode");
-    });
-
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      kimicodeConfigDir: undefined,
-    });
-    expect(result.current.resolvedDirs.kimicode).toBe("/home/mock/.kimi-code");
   });
 
   it("resetAllDirectories applies provided resolved values", async () => {

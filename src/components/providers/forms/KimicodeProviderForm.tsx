@@ -189,7 +189,7 @@ export function KimicodeProviderForm({
   // reference embeds it, so it is fixed once the provider exists.
   const isEdit = Boolean(initialData);
   const [providerKey, setProviderKey] = useState(providerId ?? "");
-  const { data: existing } = useProvidersQuery("kimicode");
+  const { data: existing } = useProvidersQuery("kimi");
   const keyTaken =
     !isEdit &&
     Object.prototype.hasOwnProperty.call(
@@ -514,9 +514,7 @@ export function KimicodeProviderForm({
               placeholder="https://api.kimi.com/coding/v1"
             />
             <p className="text-xs text-fg-2">
-              {t("opencode.baseUrlHint", {
-                defaultValue: "自定义 API 端点地址",
-              })}
+              {t("kimicode.form.baseUrlHint")}
             </p>
           </div>
 
@@ -620,7 +618,7 @@ export function KimicodeProviderForm({
                   htmlFor="kimicode-model-context"
                   className="text-xs text-fg-2"
                 >
-                  {t("opencode.limitContext", { defaultValue: "上下文" })}
+                  {t("kimi.contextSize", { defaultValue: "上下文" })}
                 </FormLabel>
                 <Input
                   id="kimicode-model-context"

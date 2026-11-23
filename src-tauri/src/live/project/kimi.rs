@@ -4,8 +4,7 @@
 //!
 //! 路由 / 聚合模式写一张保留 provider 表 `[providers."cc-switch:proxy"]`（客户端协议固定
 //! `type = "anthropic"`，地址指向本地代理，Key 是占位符），`default_model` 指向它的模型表；
-//! 用户的 `cc-switch:<id>` 表在代理模式下不改写（additive 写入被抑制，见
-//! `services::provider`）。退出时代理表整组删掉，`default_model` 指回直连供应商的模型。
+//! 用户的原生表和旧版 `cc-switch:<id>` 表保留，编辑在退出代理时按归属写回。
 
 use std::path::Path;
 
@@ -14,9 +13,7 @@ use toml_edit::{DocumentMut, Item, Table, TableLike};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::kimi_config::{
-    json_to_toml, MODEL_FIELDS, PROVIDER_FIELDS, PROXY_PLACEHOLDER, RESERVED_PROXY_TABLE,
-};
+use crate::kimi_config::{json_to_toml, PROXY_PLACEHOLDER, RESERVED_PROXY_TABLE};
 use crate::live::patch::toml::TomlDocPatch;
 use crate::live::patch::{KeyPath, LiveWriteError};
 use crate::mode::stack::{self, Member};
@@ -29,24 +26,54 @@ const PROXY_PROVIDER_TYPE: &str = "anthropic";
 /// 供应商行中一个模型的发布配置（保留逐模型选项）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KimiModel {
-    /// `[models."<provider>/<alias>"]` 的表键后缀：行里显式 `alias`，没有是模型 id
-    /// （含 `/` 的模型 id 必须有显式 alias，`kimi_config::validate_provider` 保证，
-    /// 所以 alias 不会含 `/`）。
+    /// 兼容旧版行的 alias 与原生模型表键；原生键允许包含 `/`。
     pub alias: String,
     /// 发往上游的模型 id。
     pub upstream: String,
     pub max_context_size: Option<u64>,
     pub display_name: Option<String>,
     options: Value,
+    native_key: Option<String>,
 }
 
 impl KimiModel {
     /// 从供应商行（`settings_config`）取模型；行里没有模型（过不了校验的行）时是 `None`。
     pub fn of(settings: &Value) -> Option<Self> {
-        Self::of_model(settings.get("model")?)
+        Self::all_of(settings).into_iter().next()
     }
 
     pub fn all_of(settings: &Value) -> Vec<Self> {
+        if let Some(models) = settings.get("models").and_then(Value::as_object) {
+            let preferred = settings.get("default_model").and_then(Value::as_str);
+            let legacy = settings
+                .get("cc_switch_legacy_namespace")
+                .and_then(Value::as_bool)
+                == Some(true);
+            let mut result: Vec<Self> = models
+                .iter()
+                .filter_map(|(key, model)| {
+                    let mut model = Self::of_model(model)?;
+                    model.alias = if legacy {
+                        key.split_once('/')
+                            .map(|(_, alias)| alias)
+                            .unwrap_or(key)
+                            .to_string()
+                    } else {
+                        key.clone()
+                    };
+                    model.native_key = Some(key.clone());
+                    Some(model)
+                })
+                .collect();
+            if let Some(index) = preferred.and_then(|preferred| {
+                result
+                    .iter()
+                    .position(|model| model.native_key.as_deref() == Some(preferred))
+            }) {
+                result.swap(0, index);
+            }
+            return result;
+        }
         crate::kimi_config::provider_models(settings)
             .into_iter()
             .filter_map(Self::of_model)
@@ -69,11 +96,9 @@ impl KimiModel {
             .filter(|alias| !alias.is_empty())
             .unwrap_or(&upstream)
             .to_string();
-        if alias.contains('/') {
-            return None;
-        }
         Some(Self {
             options: model.clone(),
+            native_key: None,
             alias,
             upstream,
             max_context_size: model.get("max_context_size").and_then(Value::as_u64),
@@ -138,7 +163,7 @@ impl KimiProjection {
                         .into_iter()
                         .map(|model| {
                             let id =
-                                stack::encode(&AppType::KimiCode, &member.key, &model.alias, false);
+                                stack::encode(&AppType::Kimi, &member.key, &model.alias, false);
                             let name = stack::display_name(
                                 model.display_name.as_deref().unwrap_or(&model.alias),
                                 &member.provider.name,
@@ -156,7 +181,7 @@ impl KimiProjection {
                 .find(|member| member.route)
                 .map(|member| member.key.as_str())
                 .unwrap_or_default();
-            stack::encode(&AppType::KimiCode, route_key, &route_model.alias, false)
+            stack::encode(&AppType::Kimi, route_key, &route_model.alias, false)
         };
 
         let mut models = Vec::with_capacity(published.len());
@@ -196,13 +221,21 @@ impl KimiProjection {
                 format!("Kimi Code provider {} is missing the model", provider.id),
             )
         })?;
-        let provider_key = format!("cc-switch:{}", provider.id);
+        let provider_key =
+            crate::kimi_config::native_provider_key(&provider.id, &provider.settings_config)?;
+        let default_key = model
+            .native_key
+            .clone()
+            .unwrap_or_else(|| format!("{provider_key}/{}", model.alias));
         let table = provider_table(&provider.settings_config);
         let models = KimiModel::all_of(&provider.settings_config)
             .iter()
             .map(|entry| {
                 (
-                    format!("{provider_key}/{}", entry.alias),
+                    entry
+                        .native_key
+                        .clone()
+                        .unwrap_or_else(|| format!("{provider_key}/{}", entry.alias)),
                     model_table(&provider_key, entry),
                 )
             })
@@ -210,19 +243,22 @@ impl KimiProjection {
         Ok(Self {
             providers: vec![(provider_key, table)],
             models,
-            default_model: Some(format!("cc-switch:{}/{}", provider.id, model.alias)),
+            default_model: Some(default_key),
             contract: Value::Null,
         })
     }
 
     /// 退出代理时把库里的行都按行写回：代理模式下 additive 写入被抑制，live 里的表
     /// 可能是旧的（编辑过、删除过）。行的模型解析不出来就跳过（校验本来就拦着）。
-    pub fn restore_additive_rows(mut self, providers: impl IntoIterator<Item = Provider>) -> Self {
+    pub fn restore_additive_rows(
+        mut self,
+        providers: impl IntoIterator<Item = Provider>,
+    ) -> Result<Self, AppError> {
         for provider in providers {
             if crate::proxy::providers::kimi::managed_auth(&provider)
                 || provider.meta.as_ref().and_then(|m| m.live_config_managed) != Some(true)
                 || crate::services::ProxyService::config_has_proxy_placeholder(
-                    &AppType::KimiCode,
+                    &AppType::Kimi,
                     &provider.settings_config,
                 )
                 || crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)
@@ -237,23 +273,34 @@ impl KimiProjection {
                 );
                 continue;
             };
-            let provider_key = format!("cc-switch:{}", provider.id);
+            let Ok(provider_key) =
+                crate::kimi_config::native_provider_key(&provider.id, &provider.settings_config)
+            else {
+                continue;
+            };
             self.providers.retain(|(key, _)| key != &provider_key);
             self.providers.push((
                 provider_key.clone(),
                 provider_table(&provider.settings_config),
             ));
-            let prefix = format!("{provider_key}/");
-            self.models.retain(|(key, _)| !key.starts_with(&prefix));
+            self.models.retain(|(_, table)| {
+                table.get("provider").and_then(Item::as_str) != Some(provider_key.as_str())
+            });
             for entry in KimiModel::all_of(&provider.settings_config) {
-                let model_key = format!("{provider_key}/{}", entry.alias);
-                if !self.models.iter().any(|(key, _)| key == &model_key) {
-                    self.models
-                        .push((model_key, model_table(&provider_key, &entry)));
+                let model_key = entry
+                    .native_key
+                    .clone()
+                    .unwrap_or_else(|| format!("{provider_key}/{}", entry.alias));
+                if self.models.iter().any(|(key, _)| key == &model_key) {
+                    return Err(AppError::Conflict(format!(
+                        "Kimi model alias {model_key} belongs to more than one provider"
+                    )));
                 }
+                self.models
+                    .push((model_key, model_table(&provider_key, &entry)));
             }
         }
-        self
+        Ok(self)
     }
 
     /// 契约摘要用的规范形式。
@@ -263,33 +310,60 @@ impl KimiProjection {
 
     fn apply_to(&self, path: &Path, doc: &mut DocumentMut) -> Result<(), LiveWriteError> {
         let root = doc.as_table_mut();
+        let secondary = root.get("secondary_model").and_then(Item::as_table_like);
+        let mut secondary_models = Vec::new();
+        if let Some(key) = secondary
+            .and_then(|secondary| secondary.get("default_model"))
+            .and_then(Item::as_str)
+        {
+            secondary_models.push(key.to_string());
+        }
+        if let Some(models) = secondary
+            .and_then(|secondary| secondary.get("models"))
+            .and_then(Item::as_table_like)
+        {
+            secondary_models.extend(models.iter().map(|(key, _)| key.to_string()));
+        }
 
         if let Some(providers) = table_mut(path, root, "providers", false)? {
             providers.remove(RESERVED_PROXY_TABLE);
         }
         if let Some(models) = table_mut(path, root, "models", false)? {
             let targets: Vec<&str> = self.models.iter().map(|(key, _)| key.as_str()).collect();
-            // 保留的代理表和同一供应商名下、不在目标里的模型表一并删掉（改名留下的
-            // 陈旧别名、上一次代理发布的表）。用户手写共享前缀的表会被当成陈旧表
-            // 删掉——和 `kimi_config::write_model` 的语义一致。
-            let prefixes: Vec<String> = std::iter::once(format!("{RESERVED_PROXY_TABLE}/"))
-                .chain(
-                    self.providers
-                        .iter()
-                        .map(|(key, _)| format!("{key}/"))
-                        .collect::<Vec<_>>(),
-                )
+            let owners: Vec<&str> = std::iter::once(RESERVED_PROXY_TABLE)
+                .chain(self.providers.iter().map(|(key, _)| key.as_str()))
                 .collect();
+            for (key, target) in &self.models {
+                if let Some(existing) = models.get(key) {
+                    if existing
+                        .as_table_like()
+                        .and_then(|model| model.get("provider"))
+                        .and_then(Item::as_str)
+                        != target.get("provider").and_then(Item::as_str)
+                    {
+                        return Err(LiveWriteError::Conflict {
+                            path: path.to_path_buf(),
+                        });
+                    }
+                }
+            }
             let doomed: Vec<String> = models
                 .iter()
-                .filter(|(key, _)| {
+                .filter(|(key, model)| {
                     !targets.contains(key)
-                        && prefixes
-                            .iter()
-                            .any(|prefix| key.starts_with(prefix.as_str()))
+                        && model
+                            .as_table_like()
+                            .and_then(|model| model.get("provider"))
+                            .and_then(Item::as_str)
+                            .is_some_and(|owner| owners.contains(&owner))
                 })
                 .map(|(key, _)| key.to_string())
                 .collect();
+            if doomed.iter().any(|key| secondary_models.contains(key)) {
+                return Err(LiveWriteError::Conflict {
+                    path: path.to_path_buf(),
+                });
+            }
             for key in doomed {
                 models.remove(&key);
             }
@@ -345,9 +419,22 @@ impl TomlDocPatch for KimiProjection {
 /// 供应商行的 provider 表（只含 CC Switch 管理的字段）。
 fn provider_table(settings: &Value) -> Table {
     let mut table = Table::new();
-    for field in PROVIDER_FIELDS {
-        if let Some(value) = settings.get(field).and_then(json_to_toml) {
-            table.insert(field, Item::Value(value));
+    let fields = settings.get("provider").unwrap_or(settings);
+    for (field, value) in fields.as_object().into_iter().flatten() {
+        if ![
+            "name",
+            "kind",
+            "enabled",
+            "model",
+            "models",
+            "default_model",
+            "cc_switch_legacy_namespace",
+        ]
+        .contains(&field.as_str())
+        {
+            if let Some(value) = json_to_toml(value) {
+                table.insert(field, Item::Value(value));
+            }
         }
     }
     table
@@ -356,9 +443,11 @@ fn provider_table(settings: &Value) -> Table {
 /// 供应商行的模型表（`provider` 指向自己的表）。
 fn model_table(provider_key: &str, model: &KimiModel) -> Table {
     let mut table = Table::new();
-    for field in MODEL_FIELDS {
-        if let Some(value) = model.options.get(field).and_then(json_to_toml) {
-            table.insert(field, Item::Value(value));
+    for (field, value) in model.options.as_object().into_iter().flatten() {
+        if field != "alias" {
+            if let Some(value) = json_to_toml(value) {
+                table.insert(field, Item::Value(value));
+            }
         }
     }
     table.insert("provider", toml_edit::value(provider_key));
@@ -453,6 +542,39 @@ mod tests {
     }
 
     const USER_LIVE: &str = "# mine\ndefault_model = \"cc-switch:a/k3\"\n\n[providers.\"cc-switch:a\"]\ntype = \"kimi\"\nbase_url = \"https://a.example/v1\"\napi_key = \"sk-a\"\n\n[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\nbase_url = \"https://api.kimi.com/coding/v1\"\napi_key = \"\"\n\n[models.\"cc-switch:a/k3\"]\nprovider = \"cc-switch:a\"\nmodel = \"k3\"\nmax_context_size = 1048576\n";
+
+    #[test]
+    fn native_models_keep_arbitrary_aliases_overrides_and_ownership() {
+        let mut provider = route();
+        provider.settings_config = json!({
+            "provider":{"type":"openai", "base_url":"https://example.test/v1", "api_key":"test", "custom_headers":{"X-Project":"keep"}},
+            "models":{"my/arbitrary-alias":{"model":"vendor/model", "provider":"a", "max_context_size":1000, "overrides":{"future":true}, "future_model_field":"keep"}},
+            "default_model":"my/arbitrary-alias"
+        });
+        let projection = KimiProjection::direct(Some(&provider)).unwrap();
+        let before = "# preserve\n[providers.other]\ntype='openai'\napi_key='test'\n[models.'a/sibling']\nprovider='other'\nmodel='keep'\nmax_context_size=1000\n";
+        let text = apply(&projection, before);
+        let config: Value = toml::from_str(&text).unwrap();
+        assert_eq!(
+            config["providers"]["a"]["custom_headers"]["X-Project"],
+            "keep"
+        );
+        assert_eq!(config["models"]["my/arbitrary-alias"]["provider"], "a");
+        assert_eq!(
+            config["models"]["my/arbitrary-alias"]["overrides"]["future"],
+            true
+        );
+        assert_eq!(
+            config["models"]["my/arbitrary-alias"]["future_model_field"],
+            "keep"
+        );
+        assert_eq!(config["models"]["a/sibling"]["model"], "keep");
+        assert_eq!(config["default_model"], "my/arbitrary-alias");
+        let collision = before.replace("a/sibling", "my/arbitrary-alias");
+        assert!(projection
+            .apply(Path::new("config.toml"), Some(collision.as_bytes()))
+            .is_err());
+    }
 
     #[test]
     fn kimi_multiple_models_keep_context_and_effort_in_all_projections() {
@@ -565,7 +687,8 @@ mod tests {
         edited.settings_config["model"]["model"] = json!("k4");
         let projection = KimiProjection::direct(Some(&edited))
             .unwrap()
-            .restore_additive_rows([edited.clone()]);
+            .restore_additive_rows([edited.clone()])
+            .unwrap();
         let out = apply(&projection, &entered);
         let doc: DocumentMut = out.parse().unwrap();
         assert!(doc["providers"].get("cc-switch:proxy").is_none(), "{out}");
@@ -592,6 +715,79 @@ mod tests {
         assert!(doc.get("default_model").is_none(), "{out}");
         // 用户自己的表不碰。
         assert!(doc["providers"].get("cc-switch:a").is_some());
+    }
+
+    #[test]
+    fn projections_preserve_secondary_model_references() {
+        let mut changed = route();
+        changed.settings_config["model"]["model"] = json!("new-model");
+        for secondary in [
+            "[secondary_model]\ndefault_model='cc-switch:a/k3'\n",
+            "[secondary_model.models.'cc-switch:a/k3']\nfuture=true\n",
+        ] {
+            let before = format!("{USER_LIVE}\n{secondary}");
+            let unchanged = KimiProjection::direct(Some(&route())).unwrap();
+            assert!(unchanged
+                .apply(Path::new("config.toml"), Some(before.as_bytes()))
+                .is_ok());
+            let changed = KimiProjection::direct(Some(&changed)).unwrap();
+            assert!(changed
+                .apply(Path::new("config.toml"), Some(before.as_bytes()))
+                .is_err());
+        }
+        let proxy =
+            KimiProjection::proxy(&route(), "http://127.0.0.1:15721/kimicode", &[]).unwrap();
+        let entered = format!(
+            "{}\n[secondary_model]\ndefault_model='cc-switch:proxy/k3'\n",
+            apply(&proxy, USER_LIVE)
+        );
+        assert!(KimiProjection::direct(Some(&route()))
+            .unwrap()
+            .apply(Path::new("config.toml"), Some(entered.as_bytes()))
+            .is_err());
+    }
+
+    fn native_provider(id: &str, alias: &str) -> Provider {
+        let mut row = Provider::with_id(
+            id.into(),
+            id.into(),
+            json!({
+                "provider":{"type":"openai","base_url":"https://example.test/v1","api_key":"test"},
+                "models":{(alias):{"model":"model","provider":id,"max_context_size":1000}},
+                "default_model":alias,
+            }),
+            None,
+        );
+        row.meta
+            .get_or_insert_with(Default::default)
+            .live_config_managed = Some(true);
+        row
+    }
+
+    #[test]
+    fn restoring_additive_rows_uses_model_ownership_instead_of_alias_prefixes() {
+        let a = native_provider("a", "b/arbitrary-model");
+        let b = native_provider("b", "another-arbitrary-model");
+        let projection = KimiProjection::direct(Some(&a))
+            .unwrap()
+            .restore_additive_rows([a, b])
+            .unwrap();
+        let config: Value = toml::from_str(&apply(&projection, "")).unwrap();
+        assert_eq!(config["models"]["b/arbitrary-model"]["provider"], "a");
+        assert_eq!(config["models"]["another-arbitrary-model"]["provider"], "b");
+        assert_eq!(config["default_model"], "b/arbitrary-model");
+    }
+
+    #[test]
+    fn restoring_additive_rows_rejects_aliases_owned_by_two_providers() {
+        let a = native_provider("a", "shared-model");
+        let b = native_provider("b", "shared-model");
+        assert!(matches!(
+            KimiProjection::direct(Some(&a))
+                .unwrap()
+                .restore_additive_rows([a, b]),
+            Err(AppError::Conflict(_))
+        ));
     }
 
     #[test]

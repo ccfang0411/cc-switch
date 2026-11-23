@@ -8,6 +8,7 @@ import { settingsApi } from "@/lib/api";
 import type { OssSqlBackupEntry, OssSqlBackupResult } from "@/lib/api/settings";
 import type { S3SyncSettings } from "@/types";
 import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface Props {
   config?: S3SyncSettings;
@@ -90,6 +91,7 @@ export function OssSqlBackupSection({
   );
   const [importingKey, setImportingKey] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importWarning, setImportWarning] = useState<string | null>(null);
   const [imported, setImported] = useState<ImportedRemoteBackup | null>(null);
 
   const configured = isOssConfig(config);
@@ -136,6 +138,7 @@ export function OssSqlBackupSection({
     const entry = confirmEntry;
     setImportingKey(entry.key);
     setImportError(null);
+    setImportWarning(null);
     setImported(null);
     try {
       const response = await settingsApi.importSqlBackupFromOss(entry.key);
@@ -146,14 +149,17 @@ export function OssSqlBackupSection({
         setConfirmEntry(null);
         return;
       }
-      await onImportSuccess?.();
-      const syncResult = await syncCurrentProvidersLiveSafe();
-      if (!syncResult.ok) {
-        console.error(
-          "[OssSqlBackupSection] Failed to sync live config after remote import",
-          syncResult.error,
-        );
+      const warnings = response.warning ? [response.warning] : [];
+      try {
+        await onImportSuccess?.();
+        const syncResult = await syncCurrentProvidersLiveSafe();
+        if (!syncResult.ok) {
+          warnings.push(extractErrorMessage(syncResult.error));
+        }
+      } catch (error) {
+        warnings.push(extractErrorMessage(error));
       }
+      setImportWarning(warnings.filter(Boolean).join("\n") || null);
       setImported({
         profile: entry.profile,
         fileName: entry.fileName,
@@ -334,6 +340,14 @@ export function OssSqlBackupSection({
             {t("settings.ossSqlBackup.remoteImportFailed", {
               message: importError,
             })}
+          </p>
+        )}
+        {importWarning && (
+          <p
+            role="alert"
+            className="whitespace-pre-wrap break-all text-sm text-warning-text"
+          >
+            {importWarning}
           </p>
         )}
         {imported && (

@@ -14,7 +14,6 @@ interface DatabaseUpgradeProps {
   };
 }
 
-/** Preserve recovery access without downloading an incompatible upstream build. */
 export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
   const { t } = useTranslation();
   return (
@@ -73,4 +72,3 @@ export function DatabaseUpgrade({ payload }: DatabaseUpgradeProps) {
     </div>
   );
 }
-export default DatabaseUpgrade;

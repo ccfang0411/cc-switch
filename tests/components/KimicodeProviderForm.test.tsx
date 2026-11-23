@@ -82,7 +82,7 @@ describe("KimicodeProviderForm", () => {
     rtlRender(
       <QueryClientProvider client={client}>
         <KimicodeProviderForm
-          appId="kimicode"
+          appId="kimi"
           providerId="chatgpt"
           initialData={{
             name: "ChatGPT",
@@ -168,7 +168,7 @@ describe("KimicodeProviderForm", () => {
     rtlRender(
       <QueryClientProvider client={client}>
         <KimicodeProviderForm
-          appId="kimicode"
+          appId="kimi"
           providerId="chatgpt"
           initialData={{
             name: "ChatGPT",
@@ -229,7 +229,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         providerId="existing"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
@@ -255,7 +255,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         providerId="existing"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
@@ -282,7 +282,7 @@ describe("KimicodeProviderForm", () => {
   it("keeps a rejected save open and displays the failure", async () => {
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
         onSubmit={async () => {
@@ -304,7 +304,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
@@ -333,7 +333,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
@@ -366,7 +366,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
@@ -411,7 +411,7 @@ describe("KimicodeProviderForm", () => {
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
@@ -431,13 +431,13 @@ describe("KimicodeProviderForm", () => {
   });
 
   it("requires a well-formed, unused provider key for new providers", async () => {
-    setProviders("kimicode", {
+    setProviders("kimi", {
       taken: { id: "taken", name: "Taken", settingsConfig: original },
     });
     const submit = vi.fn();
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
@@ -473,7 +473,7 @@ describe("KimicodeProviderForm", () => {
   it("locks the provider key when editing", () => {
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         providerId="existing"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
@@ -492,7 +492,7 @@ describe("KimicodeProviderForm", () => {
   it("keeps invalid JSON drafts from breaking the structured fields", () => {
     render(
       <KimicodeProviderForm
-        appId="kimicode"
+        appId="kimi"
         initialData={{ name: "Existing", settingsConfig: original }}
         submitLabel="Save"
         onSubmit={vi.fn()}

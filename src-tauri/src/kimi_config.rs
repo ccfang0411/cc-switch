@@ -1,437 +1,325 @@
-//! Kimi Code CLI and desktop share this file. CC Switch providers live under the
-//! `cc-switch:` namespace; switching means pointing `default_model` at one of them.
-//! Entries prefixed `managed:` are written by Kimi Code's own login flow and are
-//! never listed, modified, or deleted here.
+//! Kimi Code's native providers and models share one TOML configuration.
+//! A saved CCS provider contains `{ provider: LLMProvider, models: { key: LLMModel } }`.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
+use crate::provider::Provider;
 use indexmap::IndexMap;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
+    sync::Mutex,
 };
-use toml_edit::{DocumentMut, Item, Table};
 
-const CC_PREFIX: &str = "cc-switch:";
-/// Reserved provider id: the routing/stack mode contract lives in
-/// `[providers."cc-switch:proxy"]`. It is a mode artifact, never a provider: listings
-/// skip it and user providers cannot take the key.
-pub(crate) const RESERVED_PROXY_KEY: &str = "proxy";
-pub(crate) const RESERVED_PROXY_TABLE: &str = "cc-switch:proxy";
-/// The placeholder API key the proxy contract carries (same marker as the other apps).
-pub(crate) const PROXY_PLACEHOLDER: &str = "PROXY_MANAGED";
-const PROVIDER_TYPES: [&str; 6] = [
-    "kimi",
-    "anthropic",
-    "openai",
-    "openai_responses",
-    "google-genai",
-    "vertexai",
-];
-/// Fields CC Switch manages inside a `[providers."cc-switch:<key>"]` table. Unknown
-/// keys in our namespace survive rewrites; other namespaces are never touched.
-pub(crate) const PROVIDER_FIELDS: [&str; 6] = [
-    "type",
-    "base_url",
-    "api_key",
-    "api_key_env",
-    "env",
-    "custom_headers",
-];
-/// Fields CC Switch manages inside a `[models."cc-switch:<key>/<alias>"]` table;
-/// `provider` is always rewritten to the owning provider key.
-pub(crate) const MODEL_FIELDS: [&str; 8] = [
-    "model",
-    "max_context_size",
-    "capabilities",
-    "display_name",
-    "max_output_size",
-    "support_efforts",
-    "default_effort",
-    "provider",
-];
+mod compat;
+pub(crate) use compat::{
+    canonical_config, json_to_toml, model_alias, provider_models, PROXY_PLACEHOLDER,
+    RESERVED_PROXY_TABLE,
+};
+
+static WRITE_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) const OFFICIAL_PROVIDER_ID: &str = "managed:kimi-code";
+const OFFICIAL_PROVIDER_NAME: &str = "Kimi Official";
+
+pub(crate) fn is_official_provider(config: &Value) -> bool {
+    config.pointer("/provider/type").and_then(Value::as_str) == Some("kimi")
+        && config
+            .pointer("/provider/oauth/key")
+            .and_then(Value::as_str)
+            .is_some_and(|key| !key.trim().is_empty())
+}
+
+pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String {
+    if let Some(nickname) = nickname.map(str::trim).filter(|name| !name.is_empty()) {
+        format!("{OFFICIAL_PROVIDER_NAME} · {nickname}")
+    } else if id == OFFICIAL_PROVIDER_ID {
+        OFFICIAL_PROVIDER_NAME.into()
+    } else if let Some(name) = ["Kimi 订阅 ", "Kimi Subscription ", "Kimi "]
+        .iter()
+        .find_map(|prefix| id.strip_prefix(prefix))
+    {
+        // Separate accounts are keyed `Kimi 订阅 <nickname>` (see kimi_oauth::new_account).
+        format!("{OFFICIAL_PROVIDER_NAME} · {name}")
+    } else {
+        let account = id.strip_prefix("kimi-code-ccs-").unwrap_or(id);
+        format!(
+            "{OFFICIAL_PROVIDER_NAME} ({})",
+            account.chars().take(8).collect::<String>()
+        )
+    }
+}
+
+/// Fill in native account identities without replacing custom display fields.
+/// Names CC Switch generated earlier follow the account's current nickname.
+pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
+    if !is_official_provider(&provider.settings_config) {
+        if provider.has_official_category() {
+            provider.category = None;
+        }
+        return;
+    }
+    provider.category = Some("official".into());
+    if provider.name.trim().is_empty()
+        || provider.name == provider.id
+        || provider.name.starts_with(OFFICIAL_PROVIDER_NAME)
+    {
+        provider.name = official_provider_name(&provider.id, nickname);
+    }
+    if provider
+        .icon
+        .as_deref()
+        .is_none_or(|icon| icon.trim().is_empty())
+    {
+        provider.icon = Some("kimi".into());
+    }
+    let global = provider
+        .settings_config
+        .pointer("/provider/base_url")
+        .and_then(Value::as_str)
+        .and_then(|base| url::Url::parse(base).ok())
+        .is_some_and(|url| url.host_str() == Some("api.kimi.ai"));
+    if provider.website_url.as_deref().is_none_or(|url| {
+        url.trim().is_empty() || matches!(url, "https://www.kimi.com" | "https://www.kimi.ai")
+    }) {
+        provider.website_url = Some(
+            if global {
+                "https://www.kimi.ai"
+            } else {
+                "https://www.kimi.com"
+            }
+            .into(),
+        );
+    }
+}
 
 pub(crate) fn data_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_kimicode_override_dir() {
-        return custom;
-    }
-    explicit_data_dir(std::env::var("KIMI_CODE_HOME").ok().as_deref())
-        .unwrap_or_else(|| get_home_dir().join(".kimi-code"))
-}
-
-fn explicit_data_dir(kimi_code_home: Option<&str>) -> Option<PathBuf> {
-    let path = kimi_code_home?.trim();
-    (!path.is_empty()).then(|| PathBuf::from(path))
-}
-
-// Callers hold their feature lock across the native write and database commit.
-pub(crate) fn write_and_commit<T>(
-    path: &Path,
-    write: impl FnOnce() -> Result<(), AppError>,
-    commit: impl FnOnce() -> Result<T, AppError>,
-) -> Result<T, AppError> {
-    let previous = match fs::read(path) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(AppError::io(path, error)),
-    };
-    write()?;
-    match commit() {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            let rollback = match previous {
-                Some(bytes) => atomic_write_private(path, &bytes),
-                None => fs::remove_file(path).map_err(|error| AppError::io(path, error)),
-            };
-            if let Err(rollback_error) = rollback {
-                return Err(AppError::Message(format!(
-                    "Config update failed ({error}); restoring {} also failed: {rollback_error}",
-                    path.display()
-                )));
-            }
-            Err(error)
-        }
-    }
+    crate::settings::get_override_dir(&crate::app_config::AppType::Kimi).unwrap_or_else(|| {
+        std::env::var_os("KIMI_CODE_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| get_home_dir().join(".kimi-code"))
+    })
 }
 
 pub(crate) fn config_path() -> PathBuf {
     data_dir().join("config.toml")
 }
 
-fn read(path: &Path) -> Result<DocumentMut, AppError> {
+pub(crate) fn read(path: &Path) -> Result<Value, AppError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            return Err(AppError::Message(format!(
-                "Cannot read Kimi Code configuration: {e}"
-            )))
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(error) => return Err(AppError::io(path, error)),
     };
-    if text.trim().is_empty() {
-        return Ok(DocumentMut::new());
+    let value: Value = toml::from_str(&text)
+        .map_err(|_| AppError::Config("Invalid Kimi Code TOML configuration".into()))?;
+    if !value.is_object()
+        || ["providers", "models"]
+            .iter()
+            .any(|key| value.get(key).is_some_and(|v| !v.is_object()))
+    {
+        return Err(AppError::Config(
+            "Kimi Code providers and models must be objects".into(),
+        ));
     }
-    text.parse::<DocumentMut>()
-        .map_err(|_| AppError::Config("Invalid Kimi Code TOML configuration".into()))
+    Ok(value)
 }
 
-fn toml_to_json(item: &Item) -> Value {
-    match item {
-        Item::None => Value::Null,
-        Item::Value(value) => match value {
-            toml_edit::Value::String(s) => Value::String(s.value().clone()),
-            toml_edit::Value::Integer(i) => Value::from(*i.value()),
-            toml_edit::Value::Float(f) => Value::from(*f.value()),
-            toml_edit::Value::Boolean(b) => Value::from(*b.value()),
-            toml_edit::Value::Datetime(dt) => Value::String(dt.value().to_string()),
-            toml_edit::Value::Array(array) => Value::Array(
-                array
-                    .iter()
-                    .map(|value| toml_to_json(&Item::Value(value.clone())))
-                    .collect(),
-            ),
-            toml_edit::Value::InlineTable(table) => Value::Object(
-                table
-                    .iter()
-                    .map(|(key, value)| {
-                        (key.to_string(), toml_to_json(&Item::Value(value.clone())))
-                    })
-                    .collect(),
-            ),
-        },
-        Item::Table(table) => Value::Object(
-            table
-                .iter()
-                .map(|(key, item)| (key.to_string(), toml_to_json(item)))
-                .collect(),
-        ),
-        Item::ArrayOfTables(_) => Value::Null,
-    }
-}
-
-/// Null and objects with nested structure that TOML cannot inline are skipped by
-/// returning `None`; callers treat them as absent.
-pub(crate) fn json_to_toml(value: &Value) -> Option<toml_edit::Value> {
-    match value {
-        Value::Null => None,
-        Value::Bool(b) => Some(toml_edit::Value::from(*b)),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Some(toml_edit::Value::from(i))
-            } else {
-                n.as_f64().map(toml_edit::Value::from)
-            }
-        }
-        Value::String(s) => Some(toml_edit::Value::from(s.clone())),
-        Value::Array(items) => {
-            let mut array = toml_edit::Array::new();
-            for item in items {
-                array.push(json_to_toml(item)?);
-            }
-            Some(toml_edit::Value::Array(array))
-        }
-        Value::Object(map) => {
-            let mut table = toml_edit::InlineTable::new();
-            for (key, value) in map {
-                table.insert(key, json_to_toml(value)?);
-            }
-            Some(toml_edit::Value::InlineTable(table))
-        }
-    }
-}
-
-fn table_mut<'a>(item: &'a mut Item, what: &str) -> Result<&'a mut Table, AppError> {
-    item.as_table_mut()
-        .ok_or_else(|| AppError::Config(format!("Invalid Kimi Code {what} configuration")))
-}
-
-/// All `cc-switch:` providers, keyed by their bare id, with their models folded in.
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let document = read(&config_path())?;
-    let mut providers = IndexMap::new();
-    let Some(table) = document.get("providers") else {
-        return Ok(providers);
-    };
-    let table = table
-        .as_table()
-        .ok_or_else(|| AppError::Config("Invalid Kimi Code providers configuration".into()))?;
-    for (key, item) in table.iter() {
-        let Some(id) = key.strip_prefix(CC_PREFIX) else {
-            continue;
-        };
-        // The reserved proxy table is a routing/stack-mode artifact, not a provider.
-        if id == RESERVED_PROXY_KEY {
-            continue;
-        }
-        let Some(provider) = item.as_table() else {
-            continue;
-        };
-        providers.insert(id.to_string(), provider_to_json(&document, key, provider));
-    }
-    Ok(providers)
+    providers_in(&read(&config_path())?)
 }
 
-fn provider_to_json(document: &DocumentMut, key: &str, provider: &Table) -> Value {
-    let mut config = serde_json::Map::new();
-    for (field, item) in provider.iter() {
-        config.insert(field.to_string(), toml_to_json(item));
-    }
-    if let Some(all) = document.get("models").and_then(Item::as_table) {
-        let prefix = format!("{key}/");
-        let selected = document.get("default_model").and_then(Item::as_str);
-        let mut models = Vec::new();
-        let mut default = None;
-        for (model_key, item) in all.iter() {
-            let Some(alias) = model_key.strip_prefix(&prefix) else {
-                continue;
-            };
-            let Some(table) = item.as_table() else {
-                continue;
-            };
-            let mut fields = serde_json::Map::new();
-            for (field, item) in table.iter() {
-                if field != "provider" {
-                    fields.insert(field.to_string(), toml_to_json(item));
-                }
-            }
-            if fields.get("model").and_then(Value::as_str) != Some(alias) {
-                fields.insert("alias".into(), Value::String(alias.to_string()));
-            }
-            let model = Value::Object(fields);
-            if default.is_none() || Some(model_key) == selected {
-                default = Some(model.clone());
-            }
-            models.push(model);
-        }
-        if let Some(model) = default {
-            config.insert("model".into(), model);
-        }
-        if models.len() > 1 {
-            config.insert("models".into(), Value::Array(models));
-        }
-    }
-    Value::Object(config)
-}
-
-/// Any `[providers]` node under this key, including hand-written `cc-switch:` entries.
-/// The reserved proxy key never counts: it is written by routing/stack mode, and
-/// `validate_provider` keeps user providers from taking it.
-pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
-    if id == RESERVED_PROXY_KEY {
-        return Ok(false);
-    }
-    let document = read(&config_path())?;
-    Ok(document
+fn providers_in(document: &Value) -> Result<IndexMap<String, Value>, AppError> {
+    let mut result = IndexMap::new();
+    for (native_id, _) in document
         .get("providers")
-        .and_then(Item::as_table)
-        .is_some_and(|providers| providers.contains_key(&format!("{CC_PREFIX}{id}"))))
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if native_id == RESERVED_PROXY_TABLE {
+            continue;
+        }
+        let id = compat::stored_id(native_id);
+        if result.contains_key(id) {
+            return Err(AppError::Config(format!(
+                "Kimi Code provider '{id}' has conflicting native and legacy entries"
+            )));
+        }
+        result.insert(id.to_string(), compat::snapshot(document, native_id));
+    }
+    Ok(result)
 }
 
-/// The provider the live `default_model` points at (`cc-switch:<id>/...`); the reserved
-/// proxy pointer and unmanaged (`managed:` etc.) selections yield `None`. Fallback for
-/// the direct-mode pointer when neither the device settings nor the DB have one.
-pub(crate) fn default_provider_id() -> Option<String> {
-    let document = read(&config_path()).ok()?;
-    document
-        .get("default_model")
-        .and_then(Item::as_str)
-        .and_then(|selected| selected.strip_prefix(CC_PREFIX))
-        .and_then(|rest| rest.split('/').next())
-        .filter(|id| !id.is_empty() && *id != RESERVED_PROXY_KEY)
-        .map(str::to_string)
+pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
+    let document = read(&config_path())?;
+    let key = compat::native_id(&document, id, None)?;
+    Ok(key != RESERVED_PROXY_TABLE
+        && document
+            .get("providers")
+            .and_then(|providers| providers.get(&key))
+            .is_some())
 }
 
-/// The live config currently carries the routing/stack-mode proxy contract.
 pub(crate) fn live_has_proxy_placeholder() -> bool {
     read(&config_path())
         .ok()
         .and_then(|document| {
             document
-                .get("providers")
-                .and_then(Item::as_table)
-                .and_then(|providers| providers.get(RESERVED_PROXY_TABLE))
-                .and_then(Item::as_table)
-                .and_then(|proxy| proxy.get("api_key"))
-                .and_then(Item::as_str)
+                .get("providers")?
+                .get(RESERVED_PROXY_TABLE)?
+                .get("api_key")?
+                .as_str()
                 .map(str::to_string)
         })
         .as_deref()
         == Some(PROXY_PLACEHOLDER)
 }
 
-/// The Kimi Code alias for the managed model: the explicit `alias` when present
-/// (required when the upstream model id contains '/'), else the model id itself.
-pub(crate) fn model_alias(model: &Value) -> Option<&str> {
-    model
-        .get("alias")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|alias| !alias.is_empty())
-        .or_else(|| {
-            model
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
-        })
+pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
+    let config = canonical_config(id, config)?;
+    if native_provider_key(id, &config)? == RESERVED_PROXY_TABLE {
+        return Err(AppError::InvalidInput(
+            "The Kimi Code proxy provider key is reserved".into(),
+        ));
+    }
+    validate_canonical_provider(id, &config)
 }
 
-/// The singular model remains the default for backwards compatibility.
-pub(crate) fn provider_models(config: &Value) -> Vec<&Value> {
-    let mut result = Vec::new();
-    if let Some(model) = config.get("model") {
-        result.push(model);
+fn validate_canonical_provider(id: &str, config: &Value) -> Result<(), AppError> {
+    if id == RESERVED_PROXY_TABLE {
+        return Err(AppError::InvalidInput(
+            "The Kimi Code proxy provider key is reserved".into(),
+        ));
     }
-    if let Some(models) = config.get("models").and_then(Value::as_array) {
-        for model in models {
-            if !result.iter().any(|m| model_alias(m) == model_alias(model)) {
-                result.push(model);
-            }
+    if id.trim().is_empty() || id.chars().any(char::is_control) {
+        return Err(AppError::InvalidInput(
+            "Enter a Kimi Code provider key".into(),
+        ));
+    }
+    let provider = &config["provider"];
+    if !matches!(
+        provider.get("type").and_then(Value::as_str),
+        Some("kimi" | "openai" | "openai_responses" | "anthropic" | "google-genai" | "vertexai")
+    ) {
+        return Err(AppError::InvalidInput(
+            "Select a supported Kimi Code provider type".into(),
+        ));
+    }
+    if provider.get("base_url").is_some_and(|base| {
+        !base.as_str().is_some_and(|base| {
+            url::Url::parse(base).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+            })
+        })
+    }) {
+        return Err(AppError::InvalidInput(
+            "Enter a valid Kimi Code endpoint URL".into(),
+        ));
+    }
+    // Kimi refreshes native OAuth credentials; references must survive provider edits.
+    if provider
+        .get("api_key")
+        .and_then(Value::as_str)
+        .is_none_or(|key| key.trim().is_empty())
+        && provider
+            .pointer("/oauth/key")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        && provider
+            .get("api_key_env")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        && provider
+            .get("env")
+            .and_then(Value::as_object)
+            .is_none_or(|env| {
+                ![
+                    "KIMI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "OPENAI_API_KEY",
+                    "GOOGLE_API_KEY",
+                    "VERTEXAI_API_KEY",
+                ]
+                .iter()
+                .any(|key| {
+                    env.get(*key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+            })
+    {
+        return Err(AppError::InvalidInput(
+            "Enter an API key or keep the existing Kimi OAuth reference".into(),
+        ));
+    }
+    if provider.get("api_key_env").is_some()
+        && (provider.get("oauth").is_some()
+            || provider
+                .get("api_key")
+                .and_then(Value::as_str)
+                .is_some_and(|key| !key.is_empty()))
+    {
+        return Err(AppError::InvalidInput(
+            "api_key_env cannot be combined with api_key or OAuth".into(),
+        ));
+    }
+    let models = config
+        .get("models")
+        .and_then(Value::as_object)
+        .filter(|models| !models.is_empty())
+        .ok_or_else(|| AppError::InvalidInput("Add at least one Kimi Code model".into()))?;
+    if let Some(default_model) = config.get("default_model") {
+        if default_model
+            .as_str()
+            .is_none_or(|key| !models.contains_key(key))
+        {
+            return Err(AppError::InvalidInput(
+                "Select a default Kimi Code model belonging to this provider".into(),
+            ));
         }
     }
-    result
-}
-
-fn validate_model(model: &Value) -> Result<(), AppError> {
-    if model
-        .get("model")
-        .and_then(Value::as_str)
-        .is_none_or(|id| id.trim().is_empty())
-    {
-        return Err(AppError::InvalidInput("Enter a Kimi Code model id".into()));
-    }
-    if model_alias(model).is_none_or(|alias| alias.contains('/')) {
-        return Err(AppError::InvalidInput(
-            "A model id containing '/' needs an explicit alias without '/'".into(),
-        ));
-    }
-    if model
-        .get("max_context_size")
-        .and_then(Value::as_u64)
-        .is_none_or(|n| n == 0)
-    {
-        return Err(AppError::InvalidInput(
-            "The Kimi Code model needs a positive max_context_size".into(),
-        ));
-    }
-    if let Some(effort) = model.get("default_effort").and_then(Value::as_str) {
-        if let Some(levels) = model.get("support_efforts").and_then(Value::as_array) {
+    toml::to_string(provider).map_err(|_| {
+        AppError::InvalidInput("Kimi Code provider fields must be valid TOML values".into())
+    })?;
+    for (key, model) in models {
+        toml::to_string(model).map_err(|_| {
+            AppError::InvalidInput("Kimi Code model fields must be valid TOML values".into())
+        })?;
+        if let (Some(effort), Some(levels)) = (
+            model.get("default_effort").and_then(Value::as_str),
+            model.get("support_efforts").and_then(Value::as_array),
+        ) {
             if !levels.iter().any(|level| level.as_str() == Some(effort)) {
                 return Err(AppError::InvalidInput(
                     "The default reasoning effort must be supported by this model".into(),
                 ));
             }
         }
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
-    if id == RESERVED_PROXY_KEY {
-        return Err(AppError::InvalidInput(format!(
-            "Kimi Code provider key '{id}' is reserved"
-        )));
-    }
-    if id.is_empty()
-        || id
-            .chars()
-            .any(|c| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_'))
-    {
-        return Err(AppError::InvalidInput(
-            "Kimi Code provider key must contain letters, digits, '-' or '_'".into(),
-        ));
-    }
-    if !PROVIDER_TYPES.contains(
-        &config
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-    ) {
-        return Err(AppError::InvalidInput(
-            "Select a supported Kimi Code provider type".into(),
-        ));
-    }
-    let base_url = config
-        .get("base_url")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !url::Url::parse(base_url)
-        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
-    {
-        return Err(AppError::InvalidInput(
-            "Enter a valid Kimi Code endpoint URL".into(),
-        ));
-    }
-    let api_key = config
-        .get("api_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|key| !key.is_empty());
-    let api_key_env = config
-        .get("api_key_env")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|key| !key.is_empty());
-    if api_key.is_some() == api_key_env.is_some() {
-        return Err(AppError::InvalidInput(
-            "Set exactly one of api_key and api_key_env".into(),
-        ));
-    }
-    let default = config
-        .get("model")
-        .ok_or_else(|| AppError::InvalidInput("Enter a Kimi Code model id".into()))?;
-    validate_model(default)?;
-    if let Some(value) = config.get("models") {
-        let models = value
-            .as_array()
-            .ok_or_else(|| AppError::InvalidInput("Kimi Code models must be a list".into()))?;
-        let mut aliases = std::collections::HashSet::new();
-        for model in models {
-            validate_model(model)?;
-            if !aliases.insert(model_alias(model).unwrap_or_default()) {
+        if key.trim().is_empty()
+            || model
+                .get("model")
+                .and_then(Value::as_str)
+                .is_none_or(|name| name.trim().is_empty())
+            || model
+                .get("max_context_size")
+                .and_then(Value::as_u64)
+                .is_none_or(|size| size == 0 || size > i64::MAX as u64)
+            || model
+                .get("provider")
+                .is_some_and(|value| value.as_str() != Some(id))
+        {
+            return Err(AppError::InvalidInput("Kimi Code models need a key, model ID, positive context size and matching provider".into()));
+        }
+        // Validate the shape, not Kimi's evolving capability vocabulary. Capabilities
+        // outside the editor (such as audio/video) are passed through without changes.
+        for pointer in ["/capabilities", "/overrides/capabilities"] {
+            if model.pointer(pointer).is_some_and(|caps| {
+                caps.as_array()
+                    .is_none_or(|caps| caps.iter().any(|cap| !cap.is_string()))
+            }) {
                 return Err(AppError::InvalidInput(
-                    "Duplicate Kimi Code model alias".into(),
+                    "Invalid Kimi Code model capabilities".into(),
                 ));
             }
         }
@@ -439,515 +327,1059 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
     Ok(())
 }
 
-// Same atomic directory lock protocol the other additive apps use for native files.
-struct ConfigLock(PathBuf);
-impl Drop for ConfigLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir(&self.0);
-    }
+/// Preserve TOML comments and all tables outside the edited provider's nodes.
+fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
+    let original = fs::read_to_string(path).unwrap_or_default();
+    let mut document = original
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|_| AppError::Config("Invalid Kimi Code TOML configuration".into()))?;
+    apply_document(&mut document, before, after)?;
+    atomic_write_private(path, document.to_string().as_bytes())
 }
 
-fn update(path: &Path, id: &str, provider: Option<Value>) -> Result<(), AppError> {
-    write_entry(path, id, provider, false)
-}
-
-/// `create_only` rejects a key that already exists, checked while holding the lock.
-fn write_entry(
-    path: &Path,
-    id: &str,
-    provider: Option<Value>,
-    create_only: bool,
+fn apply_document(
+    document: &mut toml_edit::DocumentMut,
+    before: &Value,
+    after: &Value,
 ) -> Result<(), AppError> {
-    fs::create_dir_all(path.parent().expect("Kimi Code configuration directory"))
-        .map_err(|e| AppError::Message(format!("Cannot create Kimi Code directory: {e}")))?;
-    let path = if path.exists() {
-        fs::canonicalize(path).map_err(|e| AppError::Message(e.to_string()))?
-    } else {
-        path.to_path_buf()
-    };
-    let lock_path = PathBuf::from(format!("{}.lock", path.display()));
-    if let Err(error) = fs::create_dir(&lock_path) {
-        if error.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(AppError::io(&lock_path, error));
-        }
-        let stale = fs::metadata(&lock_path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
-            .and_then(|mtime| mtime.elapsed().ok())
-            .is_some_and(|age| age > Duration::from_secs(10));
-        if !stale {
-            return Err(AppError::Conflict(
-                "Kimi Code configuration is busy; retry after Kimi Code finishes saving".into(),
-            ));
-        }
-        fs::remove_dir(&lock_path).map_err(|e| AppError::io(&lock_path, e))?;
-        fs::create_dir(&lock_path).map_err(|e| AppError::io(&lock_path, e))?;
-    }
-    let _lock = ConfigLock(lock_path);
-    let mut document = read(&path)?;
-    let provider_key = format!("{CC_PREFIX}{id}");
-    if let Some(alias) = document
-        .get("default_model")
-        .and_then(Item::as_str)
-        .and_then(|selected| selected.strip_prefix(&format!("{provider_key}/")))
-    {
-        if !provider.as_ref().is_some_and(|config| {
-            provider_models(config)
-                .iter()
-                .any(|model| model_alias(model) == Some(alias))
-        }) {
-            return Err(AppError::InvalidInput(
-                "Select another default model in Kimi Code before removing this model or provider"
-                    .into(),
-            ));
-        }
-    }
-    let providers = table_mut(
-        document
-            .entry("providers")
-            .or_insert_with(|| Item::Table(Table::new())),
-        "providers",
-    )?;
-    if create_only && providers.contains_key(&provider_key) {
-        return Err(AppError::InvalidInput(format!(
-            "Kimi Code provider key '{id}' already exists"
-        )));
-    }
-    match provider {
-        Some(config) => {
-            let table = table_mut(
-                providers
-                    .entry(&provider_key)
-                    .or_insert_with(|| Item::Table(Table::new())),
-                "providers",
-            )?;
-            for field in PROVIDER_FIELDS {
-                match config.get(field).and_then(json_to_toml) {
-                    Some(value) => table.insert(field, Item::Value(value)),
-                    None => table.remove(field),
-                };
-            }
-            write_models(&mut document, &provider_key, Some(&config))?;
-            // Switching means pointing `default_model` at this provider's model.
-            if let Some(alias) = config.get("model").and_then(model_alias) {
-                document["default_model"] = toml_edit::value(format!("{provider_key}/{alias}"));
-            }
-        }
-        None => {
-            providers.remove(&provider_key);
-            write_models(&mut document, &provider_key, None)?;
-        }
-    }
-    atomic_write_private(&path, document.to_string().as_bytes())
-}
-
-/// Project the provider's `model` object onto `[models."cc-switch:<key>/<alias>"]`,
-/// dropping stale aliases of the same provider. `None` removes them all.
-fn write_models(
-    document: &mut DocumentMut,
-    provider_key: &str,
-    config: Option<&Value>,
-) -> Result<(), AppError> {
-    let models = config.map(provider_models).unwrap_or_default();
-    let prefix = format!("{provider_key}/");
-    let desired: Vec<String> = models
-        .iter()
-        .filter_map(|m| model_alias(m))
-        .map(|alias| format!("{provider_key}/{alias}"))
-        .collect();
-    let stale: Vec<String> = document
-        .get("models")
-        .and_then(Item::as_table)
-        .map(|table| {
-            table
-                .iter()
-                .map(|(key, _)| key.to_string())
-                .filter(|key| key.starts_with(&prefix) && !desired.contains(key))
-                .collect()
-        })
-        .unwrap_or_default();
-    if stale.is_empty() && models.is_empty() {
-        return Ok(());
-    }
-    let all = table_mut(
-        document
-            .entry("models")
-            .or_insert_with(|| Item::Table(Table::new())),
-        "models",
-    )?;
-    for key in stale {
-        all.remove(&key);
-    }
-    for model in models {
-        let Some(alias) = model_alias(model) else {
+    let serialized = toml::to_string(after).map_err(|e| AppError::Config(e.to_string()))?;
+    let next = serialized
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| AppError::Config(e.to_string()))?;
+    for section in ["providers", "models", "services"] {
+        let old = before.get(section).and_then(Value::as_object);
+        let new = after.get(section).and_then(Value::as_object);
+        if old == new {
             continue;
-        };
-        let model_key = format!("{provider_key}/{alias}");
-        let table = table_mut(
-            all.entry(&model_key)
-                .or_insert_with(|| Item::Table(Table::new())),
-            "models",
-        )?;
-        for field in MODEL_FIELDS {
-            let value = if field == "provider" {
-                Some(Value::String(provider_key.to_string()))
-            } else {
-                model.get(field).cloned()
-            };
-            match value.as_ref().and_then(json_to_toml) {
-                Some(value) => table.insert(field, Item::Value(value)),
-                None => table.remove(field),
-            };
         }
+        if document.get(section).is_none() {
+            document[section] = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        let table = document[section]
+            .as_table_like_mut()
+            .ok_or_else(|| AppError::Config("Invalid Kimi Code table".into()))?;
+        for (key, _) in old.into_iter().flatten() {
+            if new.is_none_or(|map| !map.contains_key(key)) {
+                table.remove(key);
+            }
+        }
+        for (key, value) in new.into_iter().flatten() {
+            if old.and_then(|map| map.get(key)) != Some(value) {
+                table.insert(key, next[section][key].clone());
+            }
+        }
+    }
+    if before.get("default_model") != after.get("default_model") {
+        document["default_model"] = next["default_model"].clone();
     }
     Ok(())
 }
 
-pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
-    validate_provider(id, &config)?;
-    update(&config_path(), id, Some(config))
+fn update(path: &Path, id: &str, config: Option<Value>, create: bool) -> Result<(), AppError> {
+    let before = read(path)?;
+    let after = apply_provider(&before, id, config, create)?;
+    if before == after {
+        return Ok(());
+    }
+    write(path, &before, &after)
 }
 
-pub(crate) fn add_provider(id: &str, config: Value) -> Result<(), AppError> {
-    validate_provider(id, &config)?;
-    write_entry(&config_path(), id, Some(config), true)
+fn apply_provider(
+    before: &Value,
+    id: &str,
+    config: Option<Value>,
+    create: bool,
+) -> Result<Value, AppError> {
+    let config = config
+        .map(|config| canonical_config(id, &config))
+        .transpose()?;
+    let native_id = compat::native_id(before, id, config.as_ref())?;
+    let config = config
+        .map(|config| compat::native_config(id, &native_id, &config))
+        .transpose()?;
+    apply_native_provider(before, &native_id, config, create)
+}
+
+fn apply_native_provider(
+    before: &Value,
+    id: &str,
+    config: Option<Value>,
+    create: bool,
+) -> Result<Value, AppError> {
+    // An official node is created by signing in. Edits may change its models,
+    // but the connection (endpoint and login reference) stays as signed in.
+    // Removing it keeps the credential, so the card can be added back.
+    let official = before
+        .get("providers")
+        .and_then(|providers| providers.get(id))
+        .filter(|provider| is_official_provider(&json!({"provider": provider})))
+        .cloned();
+    let config = match (&official, config) {
+        (Some(node), Some(mut config)) => {
+            config["provider"] = node.clone();
+            Some(config)
+        }
+        (_, config) => config,
+    };
+    let removing = config.is_none();
+    let mut after = apply_provider_unchecked(before, id, config, create)?;
+    if official.is_some() && removing {
+        repoint_services(before, &mut after, id);
+    }
+    Ok(after)
+}
+
+/// [`apply_provider`] without pinning an official node's connection; only the
+/// account manager writes official nodes this way.
+fn apply_provider_unchecked(
+    before: &Value,
+    id: &str,
+    config: Option<Value>,
+    create: bool,
+) -> Result<Value, AppError> {
+    if let Some(config) = &config {
+        validate_provider(id, config)?;
+    }
+    let mut document = before.clone();
+    if let Some(preferred) = config
+        .as_ref()
+        .and_then(|config| config.get("default_model"))
+        .and_then(Value::as_str)
+    {
+        if config
+            .as_ref()
+            .and_then(|config| config["models"].get(preferred))
+            .is_none()
+        {
+            return Err(AppError::InvalidInput(
+                "The default Kimi Code model must belong to this provider".into(),
+            ));
+        }
+        if current_provider_in(before) == Some(id) {
+            document["default_model"] = json!(preferred);
+        }
+    }
+    if config.is_none()
+        && document
+            .get("providers")
+            .and_then(|providers| providers.get(id))
+            .is_none()
+    {
+        return Ok(before.clone());
+    }
+    if create && document.get("providers").and_then(|p| p.get(id)).is_some() {
+        return Err(AppError::InvalidInput(format!(
+            "Kimi Code provider key '{id}' already exists"
+        )));
+    }
+    let selected = document
+        .get("default_model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let models = document.get("models").and_then(Value::as_object);
+    if models
+        .and_then(|models| models.get(selected))
+        .and_then(|model| model.get("provider"))
+        .and_then(Value::as_str)
+        == Some(id)
+        && config
+            .as_ref()
+            .and_then(|config| config["models"].get(selected))
+            .is_none()
+    {
+        return Err(AppError::InvalidInput(
+            "Select another default model in Kimi Code before removing this model or provider"
+                .into(),
+        ));
+    }
+    let removed_model = |key: &str| {
+        models
+            .and_then(|models| models.get(key))
+            .and_then(|model| model.get("provider"))
+            .and_then(Value::as_str)
+            == Some(id)
+            && config
+                .as_ref()
+                .and_then(|config| config["models"].get(key))
+                .is_none()
+    };
+    if document
+        .pointer("/secondary_model/default_model")
+        .and_then(Value::as_str)
+        .is_some_and(removed_model)
+        || document
+            .pointer("/secondary_model/models")
+            .and_then(Value::as_object)
+            .is_some_and(|models| models.keys().any(|key| removed_model(key)))
+    {
+        return Err(AppError::InvalidInput("Update the secondary model selection in Kimi Code before removing this model or provider".into()));
+    }
+    if let Some(config) = &config {
+        for (key, _) in config["models"].as_object().unwrap() {
+            if models
+                .and_then(|models| models.get(key))
+                .is_some_and(|model| model.get("provider").and_then(Value::as_str) != Some(id))
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "Kimi Code model key '{key}' belongs to another provider"
+                )));
+            }
+        }
+    }
+    for key in ["providers", "models"] {
+        if document.get(key).is_none() {
+            document[key] = json!({});
+        }
+    }
+    document["models"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|_, model| model.get("provider").and_then(Value::as_str) != Some(id));
+    if let Some(config) = config {
+        document["providers"][id] = config["provider"].clone();
+        let new_models = config["models"].as_object().unwrap();
+        for (key, model) in new_models {
+            let mut model = model.clone();
+            model["provider"] = json!(id);
+            document["models"][key] = model;
+        }
+        if document
+            .get("default_model")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        {
+            document["default_model"] = config
+                .get("default_model")
+                .cloned()
+                .unwrap_or_else(|| json!(new_models.keys().next().unwrap()));
+        }
+    } else {
+        document["providers"].as_object_mut().unwrap().remove(id);
+    }
+    Ok(document)
+}
+
+pub(crate) fn save_and_commit<T>(
+    id: &str,
+    config: Option<Value>,
+    create: bool,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    let path = config_path();
+    crate::mcode_config::write_and_commit(&path, || update(&path, id, config, create), commit)
+}
+
+pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
+    save_and_commit(id, Some(config), false, || Ok(()))
+}
+
+pub(crate) fn native_provider_key(id: &str, config: &Value) -> Result<String, AppError> {
+    compat::native_id(&json!({}), id, Some(&canonical_config(id, config)?))
 }
 
 pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    if id == RESERVED_PROXY_KEY {
+    save_and_commit(id, None, false, || Ok(()))
+}
+
+/// Resolve the selected native alias through models, not by splitting its name:
+/// aliases can be arbitrary and provider ids may contain punctuation.
+pub(crate) fn current_provider() -> Result<String, AppError> {
+    let document = read(&config_path())?;
+    Ok(current_provider_in(&document)
+        .filter(|id| *id != RESERVED_PROXY_TABLE)
+        .map(compat::stored_id)
+        .unwrap_or_default()
+        .into())
+}
+
+fn current_provider_in(document: &Value) -> Option<&str> {
+    let selected = document.get("default_model")?.as_str()?;
+    let id = document
+        .get("models")?
+        .get(selected)?
+        .get("provider")?
+        .as_str()?;
+    document.get("providers")?.get(id)?;
+    Some(id)
+}
+
+fn select_provider_model(document: &mut Value, id: &str) -> Result<(), AppError> {
+    let models = document
+        .get("models")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AppError::InvalidInput("The Kimi Code provider has no models".into()))?;
+    let belongs_to_provider = |key: &str| {
+        models
+            .get(key)
+            .and_then(|model| model.get("provider"))
+            .and_then(Value::as_str)
+            == Some(id)
+    };
+    let selected = document
+        .get("default_model")
+        .and_then(Value::as_str)
+        .filter(|key| belongs_to_provider(key))
+        .or_else(|| {
+            models
+                .keys()
+                .find(|key| belongs_to_provider(key))
+                .map(String::as_str)
+        })
+        .ok_or_else(|| AppError::InvalidInput("The Kimi Code provider has no models".into()))?
+        .to_string();
+    document["default_model"] = json!(selected);
+    Ok(())
+}
+
+#[cfg(test)]
+fn switch_at<T>(
+    path: &Path,
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce(Value) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let before = read(path)?;
+    let after = selected_document(&before, id, &archived_config)?;
+    let native_id = compat::native_id(&after, id, Some(&archived_config))?;
+    let config = compat::snapshot(&after, &native_id);
+    crate::mcode_config::write_and_commit(path, || write(path, &before, &after), || commit(config))
+}
+
+fn selected_document(before: &Value, id: &str, archived_config: &Value) -> Result<Value, AppError> {
+    let archived_config = canonical_config(id, archived_config).or_else(|error| {
+        if before.get("providers").is_some_and(|providers| {
+            providers.get(id).is_some() || providers.get(format!("cc-switch:{id}")).is_some()
+        }) {
+            Ok(json!({}))
+        } else {
+            Err(error)
+        }
+    })?;
+    let native_id = compat::native_id(before, id, Some(&archived_config))?;
+    // Already-live providers belong to Kimi. A card click must not overwrite
+    // changes Kimi or the user made since the last supplier-list refresh.
+    let mut after = if before
+        .get("providers")
+        .and_then(|providers| providers.get(&native_id))
+        .is_some()
+    {
+        before.clone()
+    } else {
+        apply_provider(before, id, Some(archived_config.clone()), false)?
+    };
+    if current_provider_in(&after) != Some(native_id.as_str()) {
+        if let Some(preferred) = archived_config
+            .get("default_model")
+            .and_then(Value::as_str)
+            .filter(|key| {
+                after["models"]
+                    .get(*key)
+                    .and_then(|model| model.get("provider"))
+                    .and_then(Value::as_str)
+                    == Some(native_id.as_str())
+            })
+        {
+            after["default_model"] = json!(preferred);
+        }
+    }
+    select_provider_model(&mut after, &native_id)?;
+    Ok(after)
+}
+
+pub(crate) struct SelectProvider<'a> {
+    pub id: &'a str,
+    pub config: &'a Value,
+}
+
+impl crate::live::patch::toml::TomlDocPatch for SelectProvider<'_> {
+    fn apply_to(
+        &self,
+        path: &Path,
+        doc: &mut toml_edit::DocumentMut,
+    ) -> Result<(), crate::live::patch::LiveWriteError> {
+        let apply = || -> Result<_, AppError> {
+            let before: Value = toml::from_str(&doc.to_string())
+                .map_err(|error| AppError::Config(error.to_string()))?;
+            let after = selected_document(&before, self.id, self.config)?;
+            Ok((before, after))
+        };
+        let (before, after) =
+            apply().map_err(|error| crate::live::patch::LiveWriteError::Parse {
+                path: path.to_path_buf(),
+                line: 1,
+                column: 1,
+                message: error.to_string(),
+            })?;
+        apply_document(doc, &before, &after).map_err(|error| {
+            crate::live::patch::LiveWriteError::Parse {
+                path: path.to_path_buf(),
+                line: 1,
+                column: 1,
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
+pub(crate) fn with_write_lock<T>(
+    operation: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    operation()
+}
+
+/// "Add" writes a saved provider into config.toml without selecting it, so its
+/// models show up in Kimi's /model list. A node already there belongs to Kimi
+/// and is kept as is (same rule as switching).
+pub(crate) fn add_and_commit<T>(
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    let path = config_path();
+    add_at(&path, id, archived_config, commit)
+}
+
+fn add_at<T>(
+    path: &Path,
+    id: &str,
+    archived_config: Value,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let before = read(path)?;
+    let config = canonical_config(id, &archived_config).or_else(|error| {
+        if before.get("providers").is_some_and(|providers| {
+            providers.get(id).is_some() || providers.get(format!("cc-switch:{id}")).is_some()
+        }) {
+            Ok(json!({}))
+        } else {
+            Err(error)
+        }
+    })?;
+    let native_id = compat::native_id(&before, id, Some(&config))?;
+    let after = if before
+        .get("providers")
+        .and_then(|providers| providers.get(&native_id))
+        .is_some()
+    {
+        before.clone()
+    } else {
+        apply_provider(&before, id, Some(config), false)?
+    };
+    crate::mcode_config::write_and_commit(
+        path,
+        || {
+            if before == after {
+                Ok(())
+            } else {
+                write(path, &before, &after)
+            }
+        },
+        commit,
+    )
+}
+
+/// Selecting the account is explicit: signing in alone preserves the current
+/// model, while "Use this account" selects one of its official model aliases.
+pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    let path = home.join("config.toml");
+    let before = read(&path)?;
+    if before["providers"][id]
+        .pointer("/oauth/key")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
         return Err(AppError::InvalidInput(
-            "The proxy provider is reserved".into(),
+            "Sign in to Kimi Code to add official models first".into(),
         ));
     }
-    update(&config_path(), id, None)
+    let mut after = before.clone();
+    select_provider_model(&mut after, id)?;
+    write(&path, &before, &after)
+}
+
+/// Delete an official account's provider node and model aliases. The current
+/// account cannot be removed. `commit` runs after the config is written (it
+/// deletes the credential and the saved profile); on failure the config is
+/// restored byte for byte.
+pub(crate) fn remove_oauth_account<T>(
+    home: &Path,
+    id: &str,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    let path = home.join("config.toml");
+    let before = read(&path)?;
+    if current_provider_in(&before) == Some(id) {
+        return Err(AppError::localized(
+            "kimi.account.remove_current",
+            "这个账号正在使用，请先切换到其他账号再删除",
+            "This account is in use; switch to another account before removing it",
+        ));
+    }
+    let mut after = apply_provider_unchecked(&before, id, None, false)?;
+    repoint_services(&before, &mut after, id);
+    crate::mcode_config::write_and_commit(&path, || write(&path, &before, &after), commit)
+}
+
+/// Services (web search / fetch) left pointing at a removed account's login
+/// would reference a deleted credential; hand them to Kimi's own default login.
+fn repoint_services(before: &Value, after: &mut Value, id: &str) {
+    let Some(removed) = before["providers"][id]["oauth"]["key"].as_str() else {
+        return;
+    };
+    let fallback = &before["providers"][OFFICIAL_PROVIDER_ID]["oauth"];
+    if id == OFFICIAL_PROVIDER_ID || !fallback.is_object() {
+        return;
+    }
+    for service in after
+        .get_mut("services")
+        .and_then(Value::as_object_mut)
+        .into_iter()
+        .flat_map(|services| services.values_mut())
+    {
+        if service["oauth"]["key"].as_str() == Some(removed) {
+            service["oauth"] = fallback.clone();
+        }
+    }
+}
+
+/// Provision an official login under the same lock as provider edits. Keep user
+/// aliases, overrides, unrelated services, comments and the current model choice.
+/// If credentials cannot be saved, restore the exact original configuration.
+pub(crate) fn save_oauth_login(
+    home: &Path,
+    provider_id: &str,
+    token_path: &Path,
+    token: &[u8],
+    base_url: &str,
+    oauth: Value,
+    models: serde_json::Map<String, Value>,
+) -> Result<(), AppError> {
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
+    let path = home.join("config.toml");
+    let before = read(&path)?;
+    let mut after = before.clone();
+    for section in ["providers", "models", "services"] {
+        if after.get(section).is_none() {
+            after[section] = json!({});
+        }
+        if !after[section].is_object() {
+            return Err(AppError::Config(format!(
+                "Invalid Kimi Code {section} table"
+            )));
+        }
+    }
+    let mut merged_models = serde_json::Map::new();
+    for (key, model) in &models {
+        let mut merged = after["models"].get(key).cloned().unwrap_or(json!({}));
+        if merged.get("provider").is_some_and(|id| id != provider_id) {
+            return Err(AppError::InvalidInput(format!(
+                "Kimi Code model key '{key}' belongs to another provider"
+            )));
+        }
+        let fields = merged
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config(format!("Invalid Kimi Code model '{key}'")))?;
+        // These fields are owned by the official model catalog. User overrides
+        // and fields outside this set survive a subsequent login.
+        for field in [
+            "capabilities",
+            "support_efforts",
+            "default_effort",
+            "protocol",
+            "beta_api",
+            "adaptive_thinking",
+        ] {
+            fields.remove(field);
+        }
+        fields.extend(model.as_object().unwrap().clone());
+        merged_models.insert(key.clone(), merged);
+    }
+    // Signing in again owns only the connection fields; custom headers, env and
+    // any other keys the user added to this node survive.
+    let mut provider = after["providers"]
+        .get(provider_id)
+        .filter(|node| node.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    for (key, value) in [
+        ("type", json!("kimi")),
+        ("base_url", json!(base_url)),
+        ("api_key", json!("")),
+        ("oauth", oauth.clone()),
+    ] {
+        provider[key] = value;
+    }
+    validate_provider(
+        provider_id,
+        &json!({"provider": provider, "models": merged_models}),
+    )?;
+    after["providers"][provider_id] = provider;
+    for (key, model) in merged_models {
+        after["models"][key] = model;
+    }
+    if after
+        .get("default_model")
+        .and_then(Value::as_str)
+        .is_none_or(|key| after["models"].get(key).is_none())
+    {
+        after["default_model"] = json!(models.keys().next().unwrap());
+    }
+    for (name, suffix) in [("moonshot_search", "search"), ("moonshot_fetch", "fetch")] {
+        // Signing in must not switch services away from the selected account.
+        if after["services"].get(name).is_none() {
+            after["services"][name] = json!({
+                "base_url": format!("{base_url}/{suffix}"), "api_key": "", "oauth": oauth
+            });
+        }
+    }
+    crate::mcode_config::write_and_commit(
+        &path,
+        || write(&path, &before, &after),
+        || {
+            if let Some(directory) = token_path.parent() {
+                fs::create_dir_all(directory).map_err(|e| AppError::io(directory, e))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                        .map_err(|e| AppError::io(directory, e))?;
+                }
+            }
+            atomic_write_private(token_path, token)
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn provider() -> Value {
-        json!({
-            "type": "kimi",
-            "base_url": "https://api.kimi.com/coding/v1",
-            "api_key": "test-key",
-            "model": {"model": "k3", "max_context_size": 1048576, "display_name": "K3"},
-        })
-    }
 
     #[test]
-    fn kimi_multiple_models_round_trip_and_switch_default_without_losing_members() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("config.toml");
-        let mut config = provider();
-        config["model"]["support_efforts"] = json!(["low", "ultra"]);
-        config["model"]["default_effort"] = json!("ultra");
-        let extra = json!({"model":"other", "max_context_size":123456, "support_efforts":["low","high"], "default_effort":"high"});
-        config["models"] = json!([config["model"].clone(), extra.clone()]);
-        validate_provider("a", &config).unwrap();
-        update(&path, "a", Some(config.clone())).unwrap();
-        let doc = read(&path).unwrap();
-        let loaded = provider_to_json(
-            &doc,
-            "cc-switch:a",
-            doc["providers"]["cc-switch:a"].as_table().unwrap(),
-        );
-        assert_eq!(loaded["models"].as_array().unwrap().len(), 2);
-        assert_eq!(loaded["model"]["default_effort"], "ultra");
-        config["model"] = extra;
-        update(&path, "a", Some(config)).unwrap();
-        let doc = read(&path).unwrap();
-        assert_eq!(doc["default_model"].as_str(), Some("cc-switch:a/other"));
-        assert!(doc["models"].get("cc-switch:a/k3").is_some());
-    }
-
-    #[test]
-    fn native_data_directory_honors_blank_override() {
-        assert_eq!(explicit_data_dir(Some(" /data ")), Some("/data".into()));
-        assert_eq!(explicit_data_dir(Some(" \t")), None);
-        assert_eq!(explicit_data_dir(None), None);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn reclaims_a_stale_native_lock_but_preserves_an_active_lock() {
+    fn legacy_config_round_trip_keeps_namespace_and_rolls_back_failed_commit() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        let lock = path.with_extension("toml.lock");
-        fs::create_dir(&lock).unwrap();
-        assert!(update(&path, "test", Some(provider())).is_err());
-        assert!(lock.exists());
-        fs::File::open(&lock)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - Duration::from_secs(11))
-            .unwrap();
-        update(&path, "test", Some(provider())).unwrap();
-        assert!(!lock.exists());
+        let legacy = json!({"type":"openai", "base_url":"https://example.test/v1", "api_key":"test", "model":{"model":"z-model", "max_context_size":1000, "support_efforts":["high","max"], "default_effort":"max"}, "models":[{"model":"a-model", "max_context_size":2000}]});
+        update(&path, "custom", Some(legacy.clone()), true).unwrap();
+        let original = fs::read(&path).unwrap();
         let document = read(&path).unwrap();
+        assert_eq!(document["default_model"], "cc-switch:custom/z-model");
+        assert_eq!(current_provider_in(&document), Some("cc-switch:custom"));
+        let listed = providers_in(&document).unwrap();
+        assert!(!listed.contains_key("cc-switch:custom"));
         assert_eq!(
-            document["providers"]["cc-switch:test"]["type"].as_str(),
-            Some("kimi")
+            listed["custom"]["models"]["cc-switch:custom/z-model"]["default_effort"],
+            "max"
         );
+        let mut unrelated = document.clone();
+        unrelated["providers"][RESERVED_PROXY_TABLE] =
+            json!({"type":"anthropic","api_key":PROXY_PLACEHOLDER});
+        assert!(!providers_in(&unrelated).unwrap().contains_key("proxy"));
+        unrelated["providers"]["custom"] = json!({"type":"openai","api_key":"another"});
+        assert!(providers_in(&unrelated).is_err());
+        let failure = switch_at(&path, "new", legacy, |_| {
+            Err::<(), _>(AppError::Database("test failure".into()))
+        });
+        assert!(failure.is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(update(&path, "proxy", Some(json!({"type":"openai","api_key":"test","model":{"model":"m","max_context_size":1000}})), true).is_err());
     }
 
     #[test]
-    fn create_only_writes_never_replace_a_node_that_appeared_meanwhile() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let text = "[providers.\"cc-switch:raced\"]\ntype = \"kimi\"\nbase_url = \"https://theirs.example.com\"\napi_key = \"theirs\"\n";
-        fs::write(&path, text).unwrap();
-        assert!(write_entry(&path, "raced", Some(provider()), true).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), text);
-        assert!(!path.with_extension("toml.lock").exists());
-        write_entry(&path, "fresh", Some(provider()), true).unwrap();
-        let document = read(&path).unwrap();
+    fn official_card_names_follow_nickname_then_provider_key() {
         assert_eq!(
-            document["providers"]["cc-switch:fresh"]["api_key"].as_str(),
-            Some("test-key")
+            official_provider_name("Kimi 订阅 登月者9287", Some("新昵称")),
+            "Kimi Official · 新昵称"
         );
-    }
-
-    #[test]
-    fn additive_changes_preserve_managed_and_unrelated_entries_and_comments() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        let text = "# Kimi Code configuration\ndefault_model = \"managed:kimi-code/k3\"\n\n# OAuth login, do not touch\n[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\nbase_url = \"https://api.kimi.com/coding/v1\"\napi_key = \"\"\n\n[providers.\"mine\"]\ntype = \"openai\"\nbase_url = \"https://api.example.com/v1\"\napi_key = \"keep\"\n\n[models.\"managed:kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\nmodel = \"k3\"\nmax_context_size = 1048576\n\n[models.\"mine/gpt\"]\nprovider = \"mine\"\nmodel = \"gpt-5\"\nmax_context_size = 400000\n";
-        fs::write(&path, text).unwrap();
-        update(&path, "official", Some(provider())).unwrap();
-        let written = fs::read_to_string(&path).unwrap();
-        for fragment in [
-            "# Kimi Code configuration",
-            "# OAuth login, do not touch",
-            "[providers.\"managed:kimi-code\"]",
-            "[providers.\"mine\"]",
-            "provider = \"managed:kimi-code\"",
-            "provider = \"mine\"",
+        // Without a cached nickname the readable key still names the card.
+        for id in [
+            "Kimi 订阅 登月者9287",
+            "Kimi Subscription 登月者9287",
+            "Kimi 登月者9287",
         ] {
-            assert!(written.contains(fragment), "missing {fragment}");
+            assert_eq!(
+                official_provider_name(id, None),
+                "Kimi Official · 登月者9287"
+            );
         }
-        let document = read(&path).unwrap();
         assert_eq!(
-            document["default_model"].as_str(),
-            Some("cc-switch:official/k3")
+            official_provider_name("kimi-code-ccs-fd019f9e", None),
+            "Kimi Official (fd019f9e)"
         );
         assert_eq!(
-            document["providers"]["cc-switch:official"]["base_url"].as_str(),
-            Some("https://api.kimi.com/coding/v1")
+            official_provider_name(OFFICIAL_PROVIDER_ID, None),
+            "Kimi Official"
         );
-        assert_eq!(
-            document["models"]["cc-switch:official/k3"]["provider"].as_str(),
-            Some("cc-switch:official")
-        );
-        assert_eq!(
-            document["models"]["cc-switch:official/k3"]["max_context_size"].as_integer(),
-            Some(1048576)
-        );
-        // Removing our entry restores the managed namespace untouched. Repoint
-        // default_model first: removing the owner of the live default is refused.
-        fs::write(&path, &written).unwrap();
-        let mut document = read(&path).unwrap();
-        document["default_model"] = toml_edit::value("managed:kimi-code/k3");
-        atomic_write_private(&path, document.to_string().as_bytes()).unwrap();
-        update(&path, "official", None).unwrap();
-        let document = read(&path).unwrap();
-        assert!(document["providers"].get("cc-switch:official").is_none());
-        assert!(document["models"].get("cc-switch:official/k3").is_none());
-        assert!(document["providers"].get("managed:kimi-code").is_some());
-        assert!(document["models"].get("managed:kimi-code/k3").is_some());
     }
 
     #[test]
-    fn managed_providers_are_never_listed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        fs::write(
-            &path,
-            "[providers.\"managed:kimi-code\"]\ntype = \"kimi\"\nbase_url = \"https://api.kimi.com/coding/v1\"\napi_key = \"\"\n[providers.\"cc-switch:ours\"]\ntype = \"kimi\"\nbase_url = \"https://api.kimi.com/coding/v1\"\napi_key = \"key\"\n\n[models.\"managed:kimi-code/k3\"]\nprovider = \"managed:kimi-code\"\nmodel = \"k3\"\nmax_context_size = 1048576\n[models.\"cc-switch:ours/k3\"]\nprovider = \"cc-switch:ours\"\nmodel = \"k3\"\nmax_context_size = 1048576\n",
-        )
-        .unwrap();
-        let document = read(&path).unwrap();
-        let providers = document["providers"].as_table().unwrap();
-        assert!(providers.contains_key("managed:kimi-code"));
-        assert!(providers.contains_key("cc-switch:ours"));
-        let listed: Vec<String> = providers
-            .iter()
-            .filter_map(|(key, _)| key.strip_prefix(CC_PREFIX).map(str::to_string))
-            .collect();
-        assert_eq!(listed, vec!["ours"]);
-        let json = provider_to_json(
-            &document,
-            "cc-switch:ours",
-            providers.get("cc-switch:ours").unwrap().as_table().unwrap(),
+    fn official_identity_repairs_imported_name_icon_and_category_without_renaming_native_keys() {
+        let config = json!({"provider":{"type":"kimi","base_url":"https://api.kimi.com/coding/v1","oauth":{"storage":"file","key":"oauth/kimi-code"}},"models":{}});
+        let mut provider = Provider::with_id(
+            OFFICIAL_PROVIDER_ID.into(),
+            OFFICIAL_PROVIDER_ID.into(),
+            config.clone(),
+            None,
         );
-        assert_eq!(json["api_key"], "key");
-        assert_eq!(json["model"]["model"], "k3");
-        assert_eq!(json["model"]["max_context_size"], 1048576);
+        normalize_provider_identity(&mut provider, None);
+        assert_eq!(provider.id, OFFICIAL_PROVIDER_ID);
+        assert_eq!(provider.name, "Kimi Official");
+        assert_eq!(provider.icon.as_deref(), Some("kimi"));
+        assert_eq!(provider.category.as_deref(), Some("official"));
+        assert_eq!(
+            provider.website_url.as_deref(),
+            Some("https://www.kimi.com")
+        );
+        assert_eq!(provider.settings_config, config);
     }
 
     #[test]
-    fn default_model_switch_and_orphan_guard() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        update(&path, "official", Some(provider())).unwrap();
-        assert_eq!(
-            read(&path).unwrap()["default_model"].as_str(),
-            Some("cc-switch:official/k3")
+    fn official_identity_preserves_custom_display_fields_and_follows_global_website() {
+        let config = json!({"provider":{"type":"kimi","base_url":"https://api.kimi.ai/coding/v1","oauth":{"storage":"file","key":"oauth/kimi-code-env-0e4f99c69cc27850"}},"models":{}});
+        let mut provider = Provider::with_id(
+            OFFICIAL_PROVIDER_ID.into(),
+            "My Kimi account".into(),
+            config,
+            Some("https://www.kimi.com".into()),
         );
-        // Editing while keeping the same model id leaves the selection alone.
-        let mut renamed = provider();
-        renamed["model"]["display_name"] = json!("K3 (updated)");
-        update(&path, "official", Some(renamed)).unwrap();
-        let document = read(&path).unwrap();
+        provider.icon = Some("user-selected-icon".into());
+        provider.notes = Some("Keep this note".into());
+        normalize_provider_identity(&mut provider, None);
+        assert_eq!(provider.name, "My Kimi account");
+        assert_eq!(provider.icon.as_deref(), Some("user-selected-icon"));
+        assert_eq!(provider.notes.as_deref(), Some("Keep this note"));
+        assert_eq!(provider.website_url.as_deref(), Some("https://www.kimi.ai"));
+        provider.website_url = Some("https://my-bookmark.example".into());
+        normalize_provider_identity(&mut provider, None);
         assert_eq!(
-            document["default_model"].as_str(),
-            Some("cc-switch:official/k3")
+            provider.website_url.as_deref(),
+            Some("https://my-bookmark.example")
         );
-        assert_eq!(
-            document["models"]["cc-switch:official/k3"]["display_name"].as_str(),
-            Some("K3 (updated)")
-        );
-        // Renaming the model would orphan the live default_model: refused.
-        let mut other_model = provider();
-        other_model["model"]["model"] = json!("k4");
-        update(&path, "official", Some(other_model.clone())).unwrap_err();
-        assert!(read(&path).unwrap()["models"]
-            .get("cc-switch:official/k4")
-            .is_none());
-        // Removing the provider while it owns default_model is refused either way.
-        update(&path, "official", None).unwrap_err();
-        let mut document = read(&path).unwrap();
-        document["default_model"] = toml_edit::value("managed:kimi-code/k3");
-        atomic_write_private(&path, document.to_string().as_bytes()).unwrap();
-        // With the default elsewhere, the rename goes through and drops the stale alias.
-        update(&path, "official", Some(other_model)).unwrap();
-        let mut document = read(&path).unwrap();
-        assert_eq!(
-            document["default_model"].as_str(),
-            Some("cc-switch:official/k4")
-        );
-        assert!(document["models"].get("cc-switch:official/k3").is_none());
-        document["default_model"] = toml_edit::value("managed:kimi-code/k3");
-        atomic_write_private(&path, document.to_string().as_bytes()).unwrap();
-        update(&path, "official", None).unwrap();
-        assert!(read(&path).unwrap()["providers"]
-            .get("cc-switch:official")
-            .is_none());
-    }
-
-    #[test]
-    fn provider_validation() {
-        validate_provider("official", &provider()).unwrap();
-        for id in ["", "has space", "has:colon", "中文"] {
-            assert!(validate_provider(id, &provider()).is_err(), "{id}");
-        }
-        for (field, value) in [
-            ("type", json!("unsupported")),
-            ("base_url", json!("not a url")),
-            ("base_url", json!("ftp://example.com")),
-        ] {
-            let mut broken = provider();
-            broken[field] = value;
-            assert!(validate_provider("official", &broken).is_err(), "{field}");
-        }
-        let mut both = provider();
-        both["api_key_env"] = json!("KIMI_API_KEY");
-        assert!(validate_provider("official", &both).is_err());
-        let mut neither = provider();
-        neither.as_object_mut().unwrap().remove("api_key");
-        assert!(validate_provider("official", &neither).is_err());
-        let mut env_only = neither.clone();
-        env_only["api_key_env"] = json!("KIMI_API_KEY");
-        validate_provider("official", &env_only).unwrap();
-        let mut no_model = provider();
-        no_model.as_object_mut().unwrap().remove("model");
-        assert!(validate_provider("official", &no_model).is_err());
-        for bad_id in ["", "has/slash"] {
-            let mut bad = provider();
-            bad["model"]["model"] = json!(bad_id);
-            assert!(validate_provider("official", &bad).is_err(), "{bad_id}");
-        }
-        let mut no_context = provider();
-        no_context["model"]
+        provider.settings_config["provider"]
             .as_object_mut()
             .unwrap()
-            .remove("max_context_size");
-        assert!(validate_provider("official", &no_context).is_err());
+            .remove("oauth");
+        normalize_provider_identity(&mut provider, None);
+        assert!(provider.category.is_none());
+    }
+
+    fn login_models() -> serde_json::Map<String, Value> {
+        serde_json::from_value(json!({"kimi-code/k3": {
+            "provider": "managed:kimi-code", "model": "k3", "max_context_size": 1048576,
+            "capabilities": ["thinking", "tool_use"]
+        }}))
+        .unwrap()
     }
 
     #[test]
-    fn slashed_model_id_requires_and_round_trips_an_alias() {
-        // Upstream ids like "deepseek/deepseek-v4.1-flash" are legal, but the
-        // `[models."<provider>/<alias>"]` key cannot contain '/'.
-        let mut bad = provider();
-        bad["model"] = json!({"model": "deepseek/deepseek-v4.1-flash", "max_context_size": 128000});
-        assert!(validate_provider("relay", &bad).is_err());
-        bad["model"]["alias"] = json!("deepseek-v4.1-flash");
-        validate_provider("relay", &bad).unwrap();
-
+    fn oauth_login_preserves_custom_config_and_uses_native_credentials() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        update(&path, "relay", Some(bad)).unwrap();
-        let document = read(&path).unwrap();
+        let credential = dir.path().join("credentials/kimi-code.json");
+        let initial = "# preserve this comment\ndefault_model = 'custom/model'\n[providers.custom]\ntype = 'openai'\napi_key = 'test'\n[models.'custom/model']\nprovider = 'custom'\nmodel = 'custom'\nmax_context_size = 32000\n[models.'kimi-code/k3']\nprovider = 'managed:kimi-code'\nmodel = 'k3'\nmax_context_size = 262144\n[models.'kimi-code/k3'.overrides]\ndefault_effort = 'max'\n[providers.'managed:kimi-code']\ntype = 'kimi'\nbase_url = 'https://stale.example/v1'\napi_key = ''\n[providers.'managed:kimi-code'.custom_headers]\nX-Team = 'blue'\n[providers.'managed:kimi-code'.oauth]\nstorage = 'file'\nkey = 'oauth/kimi-code'\n[services.moonshot_search]\nbase_url = 'https://custom.example/search'\napi_key = 'custom-search'\n[thinking]\neffort = 'high'\n";
+        fs::write(&path, initial).unwrap();
+        let oauth = json!({"storage": "file", "key": "oauth/kimi-code"});
+        save_oauth_login(
+            dir.path(),
+            OFFICIAL_PROVIDER_ID,
+            &credential,
+            b"test-credential",
+            "https://api.kimi.com/coding/v1",
+            oauth.clone(),
+            login_models(),
+        )
+        .unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(config["default_model"], "custom/model");
+        assert_eq!(config["thinking"]["effort"], "high");
         assert_eq!(
-            document["default_model"].as_str(),
-            Some("cc-switch:relay/deepseek-v4.1-flash")
+            config["models"]["kimi-code/k3"]["overrides"]["default_effort"],
+            "max"
         );
-        let model = &document["models"]["cc-switch:relay/deepseek-v4.1-flash"];
         assert_eq!(
-            model["model"].as_str(),
-            Some("deepseek/deepseek-v4.1-flash")
+            config["models"]["kimi-code/k3"]["max_context_size"],
+            1048576
         );
-        assert!(model.get("alias").is_none());
-        // Read-back carries the alias so the next save targets the same table.
-        let json = provider_to_json(
-            &document,
-            "cc-switch:relay",
-            document["providers"]["cc-switch:relay"].as_table().unwrap(),
+        assert_eq!(config["providers"]["managed:kimi-code"]["oauth"], oauth);
+        // Signing in again replaces the connection, not the user's headers.
+        assert_eq!(
+            config["providers"]["managed:kimi-code"]["custom_headers"]["X-Team"],
+            "blue"
         );
-        assert_eq!(json["model"]["model"], "deepseek/deepseek-v4.1-flash");
-        assert_eq!(json["model"]["alias"], "deepseek-v4.1-flash");
-        // Aliased model does not trip the orphan guard on save or delete.
-        update(&path, "relay", Some(json)).unwrap();
-        let mut document = read(&path).unwrap();
-        document["default_model"] = toml_edit::value("managed:kimi-code/k3");
-        atomic_write_private(&path, document.to_string().as_bytes()).unwrap();
-        update(&path, "relay", None).unwrap();
-        assert!(read(&path).unwrap()["providers"]
-            .get("cc-switch:relay")
-            .is_none());
+        assert_eq!(
+            config["providers"]["managed:kimi-code"]["base_url"],
+            "https://api.kimi.com/coding/v1"
+        );
+        assert_eq!(
+            config["services"]["moonshot_search"]["api_key"],
+            "custom-search"
+        );
+        assert_eq!(config["services"]["moonshot_fetch"]["oauth"], oauth);
+        assert!(fs::read_to_string(path)
+            .unwrap()
+            .contains("# preserve this comment"));
+        assert_eq!(fs::read(credential).unwrap(), b"test-credential");
     }
 
     #[test]
-    fn env_sub_table_and_headers_round_trip() {
+    fn oauth_login_rolls_back_config_on_credential_write_failure() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        let mut config = provider();
-        config["env"] = json!({"KIMI_LOG": "debug"});
-        config["custom_headers"] = json!({"X-Tenant": "example"});
-        config["model"]["capabilities"] = json!(["thinking", "image_in"]);
-        update(&path, "official", Some(config)).unwrap();
-        let document = read(&path).unwrap();
+        let initial = "# original\n[thinking]\nenabled = true\n";
+        fs::write(&path, initial).unwrap();
+        let blocked = dir.path().join("credentials");
+        fs::write(&blocked, "not a directory").unwrap();
+        assert!(save_oauth_login(
+            dir.path(),
+            OFFICIAL_PROVIDER_ID,
+            &blocked.join("kimi-code.json"),
+            b"new",
+            "https://api.kimi.com/coding/v1",
+            json!({"storage":"file","key":"oauth/kimi-code"}),
+            login_models()
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), initial);
+        assert_eq!(fs::read_to_string(blocked).unwrap(), "not a directory");
+    }
+
+    #[test]
+    fn using_oauth_account_selects_official_model_only_after_explicit_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let initial = "# preserve\ndefault_model = 'custom/model'\n[models.'custom/model']\nprovider = 'custom'\nmodel = 'custom'\nmax_context_size = 32000\n[thinking]\neffort = 'high'\n";
+        fs::write(&path, initial).unwrap();
+        assert!(use_oauth_account(dir.path(), OFFICIAL_PROVIDER_ID).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), initial);
+        save_oauth_login(
+            dir.path(),
+            OFFICIAL_PROVIDER_ID,
+            &dir.path().join("credentials/kimi-code.json"),
+            b"credential",
+            "https://api.kimi.com/coding/v1",
+            json!({"storage":"file","key":"oauth/kimi-code"}),
+            login_models(),
+        )
+        .unwrap();
+        assert_eq!(read(&path).unwrap()["default_model"], "custom/model");
+        use_oauth_account(dir.path(), OFFICIAL_PROVIDER_ID).unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(config["default_model"], "kimi-code/k3");
+        assert_eq!(config["thinking"]["effort"], "high");
+        assert_eq!(config["models"]["custom/model"]["model"], "custom");
+        assert!(fs::read_to_string(path).unwrap().contains("# preserve"));
+    }
+
+    #[test]
+    fn oauth_login_rejects_model_collisions_before_replacing_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let credential = dir.path().join("kimi-code.json");
+        let initial = "[models.'kimi-code/k3']\nprovider = 'custom'\nmodel = 'my-model'\nmax_context_size = 1000\n";
+        fs::write(&path, initial).unwrap();
+        fs::write(&credential, "old").unwrap();
+        assert!(save_oauth_login(
+            dir.path(),
+            OFFICIAL_PROVIDER_ID,
+            &credential,
+            b"new",
+            "https://api.kimi.com/coding/v1",
+            json!({"storage":"file","key":"oauth/kimi-code"}),
+            login_models()
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), initial);
+        assert_eq!(fs::read_to_string(credential).unwrap(), "old");
+    }
+
+    fn node() -> Value {
+        json!({"provider":{"type":"openai","base_url":"https://example.com/v1","api_key":"test"},"models":{"test/model.v1":{"model":"model.v1","max_context_size":128000}}})
+    }
+
+    #[test]
+    fn kimi_switch_uses_fresh_native_models_and_preserves_the_selected_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let native = "# preserve\ndefault_model = 'arbitrary-alias'\n[providers.custom]\ntype = 'openai'\nbase_url = 'https://fresh.example/v1'\napi_key = 'native'\n[models.'arbitrary-alias']\nprovider = 'custom'\nmodel = 'fresh-model'\nmax_context_size = 32000\n[models.'arbitrary-alias'.overrides]\ndefault_effort = 'high'\n";
+        fs::write(&path, native).unwrap();
+        let config = switch_at(&path, "custom", json!({}), Ok).unwrap();
+        assert_eq!(config["provider"]["base_url"], "https://fresh.example/v1");
         assert_eq!(
-            document["providers"]["cc-switch:official"]["env"]["KIMI_LOG"].as_str(),
-            Some("debug")
+            config["models"]["arbitrary-alias"]["overrides"]["default_effort"],
+            "high"
+        );
+        assert_eq!(read(&path).unwrap()["default_model"], "arbitrary-alias");
+        assert_eq!(current_provider_in(&read(&path).unwrap()), Some("custom"));
+        assert_eq!(fs::read_to_string(path).unwrap(), native);
+    }
+
+    #[test]
+    fn kimi_switch_rolls_back_membership_and_default_selection_when_commit_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let native = "# original\ndefault_model = 'old-alias'\n[providers.original]\ntype = 'openai'\napi_key = 'test'\n[models.old-alias]\nprovider = 'original'\nmodel = 'old'\nmax_context_size = 1000\n";
+        fs::write(&path, native).unwrap();
+        let failed = switch_at(&path, "new", node(), |_| {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), native);
+        switch_at(&path, "new", node(), |_| Ok(())).unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(current_provider_in(&config), Some("new"));
+        assert_eq!(config["default_model"], "test/model.v1");
+        assert!(config["providers"].get("original").is_some());
+        assert!(config["models"].get("old-alias").is_some());
+        assert!(fs::read_to_string(path).unwrap().contains("# original"));
+    }
+
+    #[test]
+    fn kimi_add_keeps_the_selected_model_and_never_overwrites_a_live_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let native = "# original\ndefault_model = 'old-alias'\n[providers.original]\ntype = 'openai'\napi_key = 'test'\n[models.old-alias]\nprovider = 'original'\nmodel = 'old'\nmax_context_size = 1000\n";
+        fs::write(&path, native).unwrap();
+        let failed = add_at(&path, "new", node(), || {
+            Err::<(), _>(AppError::Message("database failed".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), native);
+
+        add_at(&path, "new", node(), || Ok(())).unwrap();
+        let config = read(&path).unwrap();
+        assert_eq!(config["default_model"], "old-alias");
+        assert_eq!(config["models"]["test/model.v1"]["provider"], "new");
+        assert!(fs::read_to_string(&path).unwrap().contains("# original"));
+
+        // 已经在 Kimi 里的节点归 Kimi：再点「添加」不拿存档覆盖
+        let before = fs::read_to_string(&path).unwrap();
+        let mut stale = node();
+        stale["provider"]["base_url"] = json!("https://stale.example/v1");
+        add_at(&path, "new", stale, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn kimi_native_roundtrip_preserves_login_other_models_and_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let initial = "# user settings\ndefault_model = 'official'\ndefault_thinking = true\n[providers.official]\ntype = 'kimi'\nbase_url = 'https://api.kimi.com/coding/v1'\napi_key = ''\n[providers.official.oauth]\nkey = 'kimi-code'\nstorage = 'file'\n[models.official]\nprovider = 'official'\nmodel = 'kimi-for-coding'\nmax_context_size = 262144\n[services.moonshot_search]\nbase_url = 'https://example.com/search'\napi_key = 'search'\n";
+        fs::write(&path, initial).unwrap();
+        update(&path, "custom", Some(node()), true).unwrap();
+        let value = read(&path).unwrap();
+        assert_eq!(value["providers"]["official"]["oauth"]["key"], "kimi-code");
+        assert_eq!(value["models"]["test/model.v1"]["provider"], "custom");
+        assert_eq!(value["default_model"], "official");
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("# user settings"));
+        update(&path, "custom", None, false).unwrap();
+        assert_eq!(
+            read(&path).unwrap(),
+            toml::from_str::<Value>(initial).unwrap()
+        );
+    }
+
+    #[test]
+    fn kimi_rejects_collisions_default_removal_and_malformed_files_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        update(&path, "first", Some(node()), true).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(update(&path, "first", Some(node()), true).is_err());
+        assert!(update(&path, "second", Some(node()), true).is_err());
+        assert!(update(&path, "first", None, false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::write(&path, "[providers\n").unwrap();
+        assert!(update(&path, "test", Some(node()), false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[providers\n");
+    }
+
+    #[test]
+    fn kimi_model_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        update(&path, "test", Some(node()), true).unwrap();
+        assert_eq!(read(&path).unwrap()["default_model"], "test/model.v1");
+        let mut invalid = node();
+        invalid["models"]["test/model.v1"]["max_context_size"] = json!(0);
+        assert!(validate_provider("test", &invalid).is_err());
+    }
+
+    #[test]
+    fn kimi_native_capabilities_survive_unrelated_provider_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = node();
+        config["models"]["test/model.v1"]["capabilities"] = json!([
+            "image_in",
+            "audio_in",
+            "thinking",
+            "video_in",
+            "image_out",
+            "audio_out",
+            "future_capability",
+            "tool_use",
+            "dynamically_loaded_tools"
+        ]);
+        config["models"]["test/model.v1"]["overrides"] = json!({"capabilities":["audio_in", "image_in", "video_in", "future_override", "always_thinking"], "default_effort":"high"});
+        validate_provider("test", &config).unwrap();
+        update(&path, "test", Some(config.clone()), true).unwrap();
+        config["provider"]["base_url"] = json!("https://updated.example.com/v1");
+        update(&path, "test", Some(config.clone()), false).unwrap();
+        let saved = read(&path).unwrap();
+        assert_eq!(
+            saved["models"]["test/model.v1"]["capabilities"],
+            config["models"]["test/model.v1"]["capabilities"]
         );
         assert_eq!(
-            document["providers"]["cc-switch:official"]["custom_headers"]["X-Tenant"].as_str(),
-            Some("example")
+            saved["models"]["test/model.v1"]["overrides"],
+            config["models"]["test/model.v1"]["overrides"]
         );
-        let json = provider_to_json(
-            &document,
-            "cc-switch:official",
-            document["providers"]["cc-switch:official"]
-                .as_table()
-                .unwrap(),
+        assert_eq!(saved["providers"]["test"], config["provider"]);
+    }
+
+    #[test]
+    fn kimi_database_commit_failure_restores_original_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let initial = "# local preferences\n[thinking]\neffort='high'\n";
+        fs::write(&path, initial).unwrap();
+        let result: Result<(), AppError> = crate::mcode_config::write_and_commit(
+            &path,
+            || update(&path, "test", Some(node()), true),
+            || Err(AppError::Database("read only".into())),
         );
-        assert_eq!(json["env"]["KIMI_LOG"], "debug");
-        assert_eq!(json["custom_headers"]["X-Tenant"], "example");
-        assert_eq!(json["model"]["capabilities"][0], "thinking");
-        assert_eq!(json["model"]["max_context_size"], 1048576);
-        assert_eq!(json["model"]["model"], "k3");
-        assert!(json["model"].get("provider").is_none());
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), initial);
+    }
+
+    #[test]
+    fn kimi_preserves_environment_auth_and_protects_secondary_model_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = node();
+        config["provider"]
+            .as_object_mut()
+            .unwrap()
+            .remove("api_key");
+        config["provider"]["api_key_env"] = json!("CUSTOM_API_KEY");
+        validate_provider("custom", &config).unwrap();
+        update(&path, "custom", Some(config), true).unwrap();
+        let initial = fs::read_to_string(&path)
+            .unwrap()
+            .replace("default_model = \"test/model.v1\"", "default_model = \"\"");
+        fs::write(
+            &path,
+            format!("{initial}\n[secondary_model]\ndefault_model='test/model.v1'\n"),
+        )
+        .unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(update(&path, "custom", None, false).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 }

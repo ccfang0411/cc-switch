@@ -33,7 +33,7 @@ const CLIENT_FILE: Partial<Record<AppId, string>> = {
   codex: "~/.codex/config.toml",
   gemini: "~/.gemini/.env",
   grokbuild: "~/.grok/config.toml",
-  kimicode: "~/.kimi-code/config.toml",
+  kimi: "~/.kimi-code/config.toml",
 };
 
 export type ModeDialogState =
@@ -221,7 +221,7 @@ function EnterBody({
               // Codex / Kimi Code 只在启动时读配置，要重启才能看到聚合的模型。
               ...(app === "codex"
                 ? [t("mode.dialog.stackNoteRestartCodex", { app: appName })]
-                : app === "kimicode"
+                : app === "kimi"
                   ? [t("mode.dialog.stackNoteRestartApp", { app: appName })]
                   : []),
             ];

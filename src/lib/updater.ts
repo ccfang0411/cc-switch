@@ -9,6 +9,12 @@ export interface UpdateInfo {
   pubDate?: string;
 }
 
+/** 用户手动下载后缓存的待安装版本（后端 `app_update::ReadyUpdate`）。 */
+export interface ReadyUpdate {
+  version: string;
+  notes?: string | null;
+}
+
 export interface CheckOptions {
   timeout?: number;
   channel?: UpdateChannel;

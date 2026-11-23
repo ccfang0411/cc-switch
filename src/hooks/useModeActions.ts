@@ -14,7 +14,7 @@ const RESTART_TO_APPLY = new Set<AppId>([
   "codex",
   "gemini",
   "grokbuild",
-  "kimicode",
+  "kimi",
   "claude-desktop",
 ]);
 

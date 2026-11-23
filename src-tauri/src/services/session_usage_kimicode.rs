@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const APP_TYPE: &str = "kimicode";
+const APP_TYPE: &str = "kimi";
 const DATA_SOURCE: &str = "kimicode_session";
 const PROVIDER_PLACEHOLDER: &str = "_kimicode_session";
 const UNKNOWN_MODEL: &str = "unknown";
@@ -77,11 +77,11 @@ impl UsageCounters {
 /// Import usage from every Kimi Code session discoverable by the session
 /// browser's current root and layout rules.
 pub fn sync_kimicode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    let roots = crate::session_manager::providers::kimicode::session_roots();
+    let roots = vec![crate::kimi_config::data_dir().join("sessions")];
     Ok(sync_kimicode_roots(db, &roots))
 }
 
-fn sync_kimicode_roots(db: &Database, roots: &[PathBuf]) -> SessionSyncResult {
+pub(crate) fn sync_kimicode_roots(db: &Database, roots: &[PathBuf]) -> SessionSyncResult {
     if let Err(error) = backfill_provider_ids(db) {
         return SessionSyncResult {
             errors: vec![format!("回填 Kimi Code 供应商标识失败: {error}")],
@@ -180,7 +180,11 @@ fn collect_wire_files(root: &Path, files: &mut Vec<WireFile>) {
             if !state_matches(&session_dir, &session_id) {
                 continue;
             }
-            let Ok(agents) = fs::read_dir(session_dir.join("agents")) else {
+            let agents_dir = session_dir.join("agents");
+            if !fs::symlink_metadata(&agents_dir).is_ok_and(|meta| meta.is_dir()) {
+                continue;
+            }
+            let Ok(agents) = fs::read_dir(agents_dir) else {
                 continue;
             };
             for agent in agents.flatten() {
@@ -206,14 +210,15 @@ fn collect_wire_files(root: &Path, files: &mut Vec<WireFile>) {
 }
 
 fn is_real_dir(entry: &fs::DirEntry) -> bool {
-    entry
-        .metadata()
-        .map(|metadata| metadata.is_dir())
-        .unwrap_or(false)
+    entry.file_type().is_ok_and(|kind| kind.is_dir())
 }
 
 fn state_matches(session_dir: &Path, session_id: &str) -> bool {
-    let Ok(bytes) = fs::read(session_dir.join("state.json")) else {
+    let state_path = session_dir.join("state.json");
+    if fs::symlink_metadata(&state_path).is_ok_and(|meta| !meta.is_file()) {
+        return false;
+    }
+    let Ok(bytes) = fs::read(state_path) else {
         // Legacy session directories may predate state.json; the wire file is
         // still the authoritative source of usage.
         return true;
@@ -474,7 +479,36 @@ fn request_id(
     format!("kimicode_session:{session_id}:{:x}", hasher.finalize())
 }
 
-fn ledger_seen(conn: &rusqlite::Connection, request_id: &str) -> Result<bool, AppError> {
+pub(crate) fn legacy_receipt(
+    session_id: &str,
+    agent: &str,
+    record: &Value,
+    usage: &TokenUsage,
+) -> Option<String> {
+    let alias = record.get("model")?.as_str()?.trim();
+    let time = record.get("time")?.as_i64()?;
+    let counters = parse_usage(record.get("usage")?);
+    if alias.is_empty()
+        || is_proxy_alias(alias)
+        || counters.is_zero()
+        || (
+            counters.input,
+            counters.output,
+            counters.cache_read,
+            counters.cache_creation,
+        ) != (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens,
+            usage.cache_creation_tokens,
+        )
+    {
+        return None;
+    }
+    Some(request_id(session_id, agent, alias, time, counters))
+}
+
+pub(crate) fn ledger_seen(conn: &rusqlite::Connection, request_id: &str) -> Result<bool, AppError> {
     conn.prepare_cached(
         "SELECT EXISTS(
              SELECT 1 FROM session_usage_dedup
@@ -489,7 +523,10 @@ fn ledger_seen(conn: &rusqlite::Connection, request_id: &str) -> Result<bool, Ap
     .map_err(|error| AppError::Database(format!("查询 Kimi Code 用量去重账本失败: {error}")))
 }
 
-fn remember_in_ledger(conn: &rusqlite::Connection, request_id: &str) -> Result<(), AppError> {
+pub(crate) fn remember_in_ledger(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR IGNORE INTO session_usage_dedup
          (data_source, request_id, semantic_id, has_entry_id)
@@ -518,6 +555,7 @@ fn insert_record(conn: &rusqlite::Connection, record: &KimiUsageRecord) -> Resul
         message_id: None,
     };
     let dedup_key = DedupKey {
+        data_source: DATA_SOURCE,
         app_type: APP_TYPE,
         model: &record.model,
         input_tokens: record.input_tokens,

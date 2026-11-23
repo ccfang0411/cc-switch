@@ -10,7 +10,9 @@ use url::Url;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
-use crate::services::sync_protocol::{transfer_timeout, TRANSFER_IDLE_TIMEOUT};
+use crate::services::sync_protocol::{
+    transfer_timeout, transport_failure_reason, TRANSFER_IDLE_TIMEOUT,
+};
 use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -56,58 +58,67 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
     }
 }
 
-/// OSS S3 compatibility accepts only virtual-hosted requests. Detect the actual
-/// hostname, rather than a substring, so custom gateways keep their path style.
-fn oss_bucket_origin(creds: &S3Credentials) -> Option<String> {
+/// Cloud vendors whose S3-compatible endpoints reject path-style requests for
+/// newly created buckets: Alibaba Cloud OSS, Tencent Cloud COS, Huawei Cloud OBS.
+/// They answer path-style URLs with 403, which reads as a wrong access key.
+const VIRTUAL_HOSTED_ONLY_DOMAINS: [&str; 4] = [
+    ".aliyuncs.com",
+    ".aliyuncs.com.cn",
+    ".myqcloud.com",
+    ".myhuaweicloud.com",
+];
+
+/// Returns `true` when the endpoint belongs to a vendor that only serves
+/// virtual-hosted URLs. Everything else (MinIO, R2, self-hosted) keeps path style.
+fn requires_virtual_hosted(host: &str) -> bool {
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    VIRTUAL_HOSTED_ONLY_DOMAINS.iter().any(|domain| {
+        let Some(regional) = host.strip_suffix(domain) else {
+            return false;
+        };
+        !domain.starts_with(".aliyuncs.")
+            || regional
+                .rsplit('.')
+                .next()
+                .is_some_and(|part| part.starts_with("oss-"))
+    })
+}
+
+/// Base URL addressing the bucket, without a trailing slash.
+///
+/// - AWS endpoints use virtual-hosted style:  `https://{bucket}.s3.{region}.amazonaws.com`
+/// - OSS / COS / OBS use virtual-hosted style: `https://{bucket}.{endpoint}`
+///   (an endpoint copied from the console that already starts with the bucket
+///   is used as is)
+/// - Other custom endpoints use path style:   `https://{endpoint}/{bucket}`
+fn bucket_base_url(creds: &S3Credentials) -> String {
+    if is_aws_endpoint(&creds.endpoint) {
+        return format!("https://{}.s3.{}.amazonaws.com", creds.bucket, creds.region);
+    }
     let (scheme, host) = split_scheme_host(&creds.endpoint);
-    let mut url = Url::parse(&format!("{scheme}://{host}")).ok()?;
-    let domain = url.host_str()?;
-    let regional = domain
-        .strip_suffix(".aliyuncs.com")
-        .or_else(|| domain.strip_suffix(".aliyuncs.com.cn"))?;
-    if !regional.rsplit('.').next()?.starts_with("oss-") {
-        return None;
+    if !requires_virtual_hosted(host) {
+        return format!("{}://{}/{}", scheme, host, creds.bucket);
     }
-    // Accept both the regional endpoint and a previously bucket-qualified one.
-    if !domain.starts_with(&format!("{}.", creds.bucket)) {
-        let qualified = format!("{}.{}", creds.bucket, domain);
-        url.set_host(Some(&qualified)).ok()?;
+    let bucket_prefix = format!("{}.", creds.bucket.to_ascii_lowercase());
+    if host.to_ascii_lowercase().starts_with(&bucket_prefix) {
+        format!("{}://{}", scheme, host)
+    } else {
+        format!("{}://{}.{}", scheme, creds.bucket, host)
     }
-    Some(url.origin().ascii_serialization())
 }
 
 /// Build the full URL for an S3 object.
-///
-/// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - OSS endpoints use virtual-hosted style; other custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
-    let key = key.trim_start_matches('/');
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/{}",
-            creds.bucket, creds.region, key
-        )
-    } else if let Some(origin) = oss_bucket_origin(creds) {
-        format!("{origin}/{key}")
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
-    }
+    format!("{}/{}", bucket_base_url(creds), key.trim_start_matches('/'))
 }
 
 /// Build the bucket-level URL (for HEAD bucket / test connection).
 fn build_bucket_url(creds: &S3Credentials) -> String {
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/",
-            creds.bucket, creds.region
-        )
-    } else if let Some(origin) = oss_bucket_origin(creds) {
-        format!("{origin}/")
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/", scheme, host, creds.bucket)
-    }
+    format!("{}/", bucket_base_url(creds))
 }
 
 // ─── Cryptographic helpers ───────────────────────────────────
@@ -274,17 +285,9 @@ fn s3_transport_error(
     key: &'static str,
     op_zh: &str,
     op_en: &str,
-    err: &reqwest::Error,
+    err: reqwest::Error,
 ) -> AppError {
-    let (zh_reason, en_reason) = if err.is_timeout() {
-        ("请求超时", "request timed out")
-    } else if err.is_connect() {
-        ("连接失败", "connection failed")
-    } else if err.is_request() {
-        ("请求构造失败", "request build failed")
-    } else {
-        ("网络请求失败", "network request failed")
-    };
+    let (zh_reason, en_reason) = transport_failure_reason(err);
 
     AppError::localized(
         key,
@@ -382,7 +385,7 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", &e))?;
+        .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -453,7 +456,7 @@ async fn put_object_inner(
         .body(bytes)
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
+        .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -497,7 +500,7 @@ pub(crate) async fn get_object(
     let resp = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, request.send())
         .await
         .map_err(|_| s3_stalled_error("s3.get_failed", "GET 请求", "GET request"))?
-        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
+        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -567,7 +570,7 @@ pub(crate) async fn head_object(
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", &e))?;
+        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -685,7 +688,7 @@ pub(crate) async fn list_objects(
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.list_failed", "列表请求", "list request", &e))?;
+        .map_err(|e| s3_transport_error("s3.list_failed", "列表请求", "list request", e))?;
     if !resp.status().is_success() {
         return Err(s3_status_error(
             "GET",
@@ -699,7 +702,7 @@ pub(crate) async fn list_objects(
     let body = resp
         .text()
         .await
-        .map_err(|e| s3_transport_error("s3.list_failed", "读取列表响应", "list response", &e))?;
+        .map_err(|e| s3_transport_error("s3.list_failed", "读取列表响应", "list response", e))?;
     if body.len() > MAX_LIST_BYTES {
         return Err(response_too_large_error(
             &redact_url(url.as_str()),
@@ -754,7 +757,7 @@ mod tests {
     #[test]
     fn oss_origins_handle_internal_acceleration_and_qualified_endpoints() {
         for endpoint in [
-            "oss-cn-chengdu.aliyuncs.com",
+            "oss-cn-chengdu.aliyuncs.com.cn",
             "https://oss-cn-chengdu-internal.aliyuncs.com/",
             "http://oss-accelerate.aliyuncs.com:8080/",
             "https://backup.oss-cn-hangzhou.aliyuncs.com",
@@ -775,7 +778,7 @@ mod tests {
             "minio.example.com:9000",
             "oss-cn-chengdu.aliyuncs.com@evil.example",
         ] {
-            assert!(oss_bucket_origin(&test_creds(endpoint, "auto", "backup")).is_none());
+            assert!(!requires_virtual_hosted(endpoint));
         }
     }
 
@@ -946,6 +949,87 @@ mod tests {
         assert!(!is_aws_endpoint("minio.example.com"));
         assert!(!is_aws_endpoint("storage.googleapis.com"));
         assert!(!is_aws_endpoint("r2.cloudflarestorage.com"));
+    }
+
+    // ── OSS / COS / OBS: virtual-hosted on custom endpoints (#3996) ──
+
+    #[test]
+    fn aliyun_oss_uses_virtual_hosted_style() {
+        let creds = test_creds("https://oss-cn-chengdu.aliyuncs.com/", "cn-chengdu", "ccs");
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/db.sql"),
+            "https://ccs.oss-cn-chengdu.aliyuncs.com/cc-switch-sync/db.sql"
+        );
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://ccs.oss-cn-chengdu.aliyuncs.com/"
+        );
+
+        // OSS also documents an `s3.` prefixed S3-compatible endpoint.
+        let creds = test_creds("s3.oss-cn-hangzhou.aliyuncs.com", "cn-hangzhou", "ccs");
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://ccs.s3.oss-cn-hangzhou.aliyuncs.com/"
+        );
+    }
+
+    #[test]
+    fn tencent_cos_and_huawei_obs_use_virtual_hosted_style() {
+        let cos = test_creds(
+            "https://cos.ap-beijing.myqcloud.com",
+            "ap-beijing",
+            "ccs-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&cos, "k.json"),
+            "https://ccs-1250000000.cos.ap-beijing.myqcloud.com/k.json"
+        );
+
+        let obs = test_creds("obs.cn-north-4.myhuaweicloud.com", "cn-north-4", "ccs");
+        assert_eq!(
+            build_bucket_url(&obs),
+            "https://ccs.obs.cn-north-4.myhuaweicloud.com/"
+        );
+    }
+
+    #[test]
+    fn virtual_hosted_endpoint_that_already_names_the_bucket_is_not_prefixed_twice() {
+        // The COS console shows the bucket domain; users often paste it as the endpoint.
+        let creds = test_creds(
+            "https://CCS-1250000000.cos.ap-guangzhou.myqcloud.com",
+            "ap-guangzhou",
+            "ccs-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&creds, "k.json"),
+            "https://CCS-1250000000.cos.ap-guangzhou.myqcloud.com/k.json"
+        );
+    }
+
+    #[test]
+    fn other_custom_endpoints_keep_path_style() {
+        for endpoint in [
+            "https://abc123.r2.cloudflarestorage.com",
+            "http://minio.local:9000",
+            "storage.example.com",
+            // A look-alike that merely contains the vendor domain is not the vendor.
+            "aliyuncs.com.example.com",
+        ] {
+            let creds = test_creds(endpoint, "auto", "ccs");
+            let (scheme, host) = split_scheme_host(endpoint);
+            assert_eq!(
+                build_bucket_url(&creds),
+                format!("{scheme}://{host}/ccs/"),
+                "{endpoint} must stay path-style"
+            );
+        }
+    }
+
+    #[test]
+    fn virtual_hosted_detection_ignores_port_and_case() {
+        assert!(requires_virtual_hosted("OSS-CN-BEIJING.ALIYUNCS.COM"));
+        assert!(requires_virtual_hosted("cos.ap-beijing.myqcloud.com:443"));
+        assert!(!requires_virtual_hosted("minio.local:9000"));
     }
 
     // ── URI encoding ──

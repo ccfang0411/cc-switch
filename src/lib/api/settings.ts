@@ -12,6 +12,7 @@ export interface ConfigTransferResult {
   message: string;
   filePath?: string;
   backupId?: string;
+  warning?: string;
 }
 
 export interface OssSqlBackupResult {
@@ -94,20 +95,18 @@ export const settingsApi = {
     return await invoke("install_update_and_restart");
   },
 
-  async checkUpdates(): Promise<void> {
-    await invoke("check_for_updates");
-  },
-
-  async openPortableUpdateDownload(version: string): Promise<void> {
-    await invoke("open_portable_update_download", { version });
-  },
-
   async isPortable(): Promise<boolean> {
     return await invoke("is_portable_mode");
   },
 
   async getConfigDir(appId: AppId): Promise<string> {
     return await invoke("get_config_dir", { app: appId });
+  },
+
+  async getConfigStatus(
+    appId: AppId,
+  ): Promise<{ exists: boolean; path: string }> {
+    return await invoke("get_config_status", { app: appId });
   },
 
   async openConfigFolder(appId: AppId): Promise<void> {
@@ -120,14 +119,6 @@ export const settingsApi = {
 
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
-  },
-
-  async getClaudeCodeConfigPath(): Promise<string> {
-    return await invoke("get_claude_code_config_path");
-  },
-
-  async getAppConfigPath(): Promise<string> {
-    return await invoke("get_app_config_path");
   },
 
   async openAppConfigFolder(): Promise<void> {
@@ -225,6 +216,10 @@ export const settingsApi = {
     });
   },
 
+  async webdavSyncClearSettings(): Promise<{ success: boolean }> {
+    return await invoke("webdav_sync_clear_settings");
+  },
+
   async webdavSyncFetchRemoteInfo(): Promise<
     RemoteSnapshotInfo | { empty: true }
   > {
@@ -261,6 +256,10 @@ export const settingsApi = {
     });
   },
 
+  async s3SyncClearSettings(): Promise<{ success: boolean }> {
+    return await invoke("s3_sync_clear_settings");
+  },
+
   async s3SyncFetchRemoteInfo(): Promise<RemoteSnapshotInfo | { empty: true }> {
     return await invoke("s3_sync_fetch_remote_info");
   },
@@ -290,10 +289,6 @@ export const settingsApi = {
 
   async setAutoLaunch(enabled: boolean): Promise<boolean> {
     return await invoke("set_auto_launch", { enabled });
-  },
-
-  async getAutoLaunchStatus(): Promise<boolean> {
-    return await invoke("get_auto_launch_status");
   },
 
   async getToolVersions(
@@ -376,6 +371,14 @@ export const settingsApi = {
     return await invoke("set_optimizer_config", { config });
   },
 
+  async getPrivacyFilterConfig(): Promise<PrivacyFilterConfig> {
+    return await invoke("get_privacy_filter_config");
+  },
+
+  async setPrivacyFilterConfig(config: PrivacyFilterConfig): Promise<boolean> {
+    return await invoke("set_privacy_filter_config", { config });
+  },
+
   async getLogConfig(): Promise<LogConfig> {
     return await invoke("get_log_config");
   },
@@ -442,6 +445,11 @@ export interface OptimizerConfig {
   enabled: boolean;
   thinkingOptimizer: boolean;
   cacheInjection: boolean;
+}
+
+export interface PrivacyFilterConfig {
+  enabled: boolean;
+  filterToolResults: boolean;
 }
 
 export interface LogConfig {

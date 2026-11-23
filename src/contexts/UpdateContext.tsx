@@ -6,60 +6,56 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import type { UpdateInfo } from "../lib/updater";
+import type { ReadyUpdate, UpdateInfo } from "../lib/updater";
 import { checkForUpdate } from "../lib/updater";
 import { extractErrorMessage } from "../utils/errorUtils";
 
 interface UpdateContextValue {
-  // 更新状态
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
   isChecking: boolean;
   error: string | null;
-
-  // 提示状态
   isDismissed: boolean;
   dismissUpdate: () => void;
-
-  // 操作方法
   checkUpdate: () => Promise<boolean>;
   resetDismiss: () => void;
+  readyUpdate: ReadyUpdate | null;
+  autoUpdateSupported: boolean;
+  routingInUse: boolean;
+  autoUpdateDownloading: boolean;
+  refreshAutoUpdate: () => Promise<void>;
+  startAutoDownload: () => Promise<void>;
 }
 
 const UpdateContext = createContext<UpdateContextValue | undefined>(undefined);
+const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
+const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion";
+const automaticUpdatesDisabled = async () => {};
+
+function dismissedVersion(): string | null {
+  const current = localStorage.getItem(DISMISSED_VERSION_KEY);
+  if (current) return current;
+  const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
+  if (legacy) {
+    localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
+    localStorage.removeItem(LEGACY_DISMISSED_KEY);
+  }
+  return legacy;
+}
 
 export function UpdateProvider({ children }: { children: React.ReactNode }) {
-  const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
-  const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion"; // 兼容旧键
-
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
-
-  // 从 localStorage 读取已关闭的版本
-  useEffect(() => {
-    const current = updateInfo?.availableVersion;
-    if (!current) return;
-
-    // 读取新键；若不存在，尝试迁移旧键
-    let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-    if (!dismissedVersion) {
-      const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-      if (legacy) {
-        localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-        localStorage.removeItem(LEGACY_DISMISSED_KEY);
-        dismissedVersion = legacy;
-      }
-    }
-
-    setIsDismissed(dismissedVersion === current);
-  }, [updateInfo?.availableVersion]);
-
   const isCheckingRef = useRef(false);
 
-  // 只做手动检查：启动时不访问更新源（私有版本也不会被官方版本覆盖）。
+  useEffect(() => {
+    const version = updateInfo?.availableVersion;
+    if (version) setIsDismissed(dismissedVersion() === version);
+  }, [updateInfo?.availableVersion]);
+
   const checkUpdate = useCallback(async () => {
     if (isCheckingRef.current) return false;
     isCheckingRef.current = true;
@@ -68,34 +64,21 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const result = await checkForUpdate({ timeout: 30000 });
-
       if (result.status === "available") {
         setHasUpdate(true);
         setUpdateInfo(result.info);
-
-        // 检查是否已经关闭过这个版本的提醒
-        let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (!dismissedVersion) {
-          const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-          if (legacy) {
-            localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-            localStorage.removeItem(LEGACY_DISMISSED_KEY);
-            dismissedVersion = legacy;
-          }
-        }
-        setIsDismissed(dismissedVersion === result.info.availableVersion);
-        return true; // 有更新
-      } else {
-        setHasUpdate(false);
-        setUpdateInfo(null);
-        setIsDismissed(false);
-        return false; // 已是最新
+        setIsDismissed(dismissedVersion() === result.info.availableVersion);
+        return true;
       }
+      setHasUpdate(false);
+      setUpdateInfo(null);
+      setIsDismissed(false);
+      return false;
     } catch (err) {
-      console.error("检查更新失败:", err);
       setError(extractErrorMessage(err) || "检查更新失败");
       setHasUpdate(false);
-      throw err; // 抛出错误让调用方处理
+      setUpdateInfo(null);
+      throw err;
     } finally {
       setIsChecking(false);
       isCheckingRef.current = false;
@@ -106,7 +89,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     setIsDismissed(true);
     if (updateInfo?.availableVersion) {
       localStorage.setItem(DISMISSED_VERSION_KEY, updateInfo.availableVersion);
-      // 清理旧键
       localStorage.removeItem(LEGACY_DISMISSED_KEY);
     }
   }, [updateInfo?.availableVersion]);
@@ -126,6 +108,12 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     dismissUpdate,
     checkUpdate,
     resetDismiss,
+    readyUpdate: null,
+    autoUpdateSupported: false,
+    routingInUse: false,
+    autoUpdateDownloading: false,
+    refreshAutoUpdate: automaticUpdatesDisabled,
+    startAutoDownload: automaticUpdatesDisabled,
   };
 
   return (

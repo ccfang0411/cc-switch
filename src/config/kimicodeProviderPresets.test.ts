@@ -105,10 +105,11 @@ describe("kimicodeProviderPresets", () => {
       );
       if (!models?.length) continue;
       matched++;
-      expect(
-        entry.modelCatalog?.map((model) => model.model),
-        entry.name,
-      ).toEqual(models.map((model) => model.model));
+      const actualModels = entry.modelCatalog?.map((model) => model.model);
+      expect(actualModels, entry.name).toEqual([
+        ...models.map((model) => model.model),
+        ...(entry.providerKey === "deepseek" ? ["deepseek-v4-pro"] : []),
+      ]);
       expect(entry.settingsConfig.models, entry.name).toBeUndefined();
       const aliases = entry.modelCatalog!.map(
         (model) => model.alias ?? model.model,
@@ -154,8 +155,13 @@ describe("kimicodeProviderPresets", () => {
     expect(nvidia).toBeDefined();
     expect(nvidia!.settingsConfig.type).toBe("openai");
     // 上游模型 id 带 "/" 时派生末段别名，后端投影为合法的 Kimi 模型表键
-    expect(nvidia!.settingsConfig.model.model).toBe("moonshotai/kimi-k3");
-    expect(nvidia!.settingsConfig.model.alias).toBe("kimi-k3");
+    expect(nvidia!.settingsConfig.model.model).toBe("moonshotai/kimi-k2.6");
+    expect(nvidia!.settingsConfig.model.alias).toBe("kimi-k2.6");
+    expect(
+      nvidia!.modelCatalog?.some(
+        (model) => model.model === "moonshotai/kimi-k3",
+      ),
+    ).toBe(false);
     expect(preset("Command Code")!.settingsConfig.type).toBe("openai");
     expect(preset("Command Code")!.settingsConfig.model.alias).toBe(
       "deepseek-v4.1-flash",
@@ -193,7 +199,7 @@ describe("Kimi Code managed login presets", () => {
       );
       expect(entry?.requiresOAuth).toBe(true);
       expect(presetGroup(entry!)).toBe("login");
-      expect(presetNeedsRouting("kimicode", { id: type, preset: entry! })).toBe(
+      expect(presetNeedsRouting("kimi", { id: type, preset: entry! })).toBe(
         true,
       );
       expect(entry?.settingsConfig.api_key).toBe("MANAGED_AUTH");

@@ -344,6 +344,19 @@ function withCodexCatalog(
       }),
     );
   if (!modelCatalog.length) return preset;
+  if (
+    preset.providerKey === "deepseek" &&
+    !modelCatalog.some((model) => model.model === "deepseek-v4-pro")
+  ) {
+    modelCatalog.push({
+      model: "deepseek-v4-pro",
+      display_name: "DeepSeek V4 Pro",
+      max_context_size: 1048576,
+      support_efforts: ["low", "high", "max"],
+      default_effort: "high",
+      capabilities: ["thinking", "tool_use"],
+    });
+  }
   // Native Kimi aliases cannot contain '/'; disambiguate equal final path segments.
   const aliases = new Set<string>();
   for (const model of modelCatalog) {

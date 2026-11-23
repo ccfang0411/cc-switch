@@ -6,8 +6,9 @@ export const exchangeRateKeys = {
 };
 
 /** 当天 USD→CNY 汇率；后端按自然日缓存，这里每小时检查一次跨天更新。 */
-export const useUsdCnyRateQuery = () =>
+export const useUsdCnyRateQuery = (enabled = true) =>
   useQuery<UsdCnyRate>({
+    enabled,
     queryKey: exchangeRateKeys.current,
     queryFn: () => exchangeRateApi.get(),
     staleTime: 60 * 60 * 1000,

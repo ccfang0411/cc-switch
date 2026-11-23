@@ -18,13 +18,14 @@ import { useUsdCnyRateQuery } from "@/lib/query/exchangeRate";
 export function useMoneyFormat() {
   const { data: settings } = useSettingsQuery();
   const resolved = resolveMoneyDisplay(settings?.usageDisplay);
-  // 本分支：默认人民币；用户没手动填写 CNY 汇率时，用后端按自然日获取的当日汇率。
+  // 未选择新版汇率来源的存量配置沿用每日人民币汇率；显式设置的来源优先。
   const savedCnyRate = settings?.usageDisplay?.exchangeRates?.CNY;
-  const { data: liveRate } = useUsdCnyRateQuery();
-  const useLiveCnyRate =
+  const useDailyRate =
     resolved.currency === "CNY" &&
-    !isValidExchangeRate(savedCnyRate) &&
-    isValidExchangeRate(liveRate?.rate);
+    settings?.usageDisplay?.rateSource == null &&
+    !isValidExchangeRate(savedCnyRate);
+  const { data: liveRate } = useUsdCnyRateQuery(useDailyRate);
+  const useLiveCnyRate = useDailyRate && isValidExchangeRate(liveRate?.rate);
   const currency = resolved.currency;
   const rate = useLiveCnyRate ? liveRate!.rate : resolved.rate;
 
