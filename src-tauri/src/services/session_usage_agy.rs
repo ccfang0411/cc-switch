@@ -170,6 +170,7 @@ fn costs(
     pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
     model: &str,
     tokens: [i64; 4],
+    created_at: i64,
 ) -> [String; 5] {
     let [input, output, cache_read, cache_write] =
         tokens.map(|v| u32::try_from(v).unwrap_or(u32::MAX));
@@ -185,7 +186,14 @@ fn costs(
     let pricing = pricing_cache
         .entry(model.to_string())
         .or_insert_with(|| crate::services::usage_stats::find_model_pricing(conn, model));
-    cost_columns("agy", &usage, pricing.as_ref(), rust_decimal::Decimal::ONE)
+    cost_columns(
+        "agy",
+        &usage,
+        pricing.as_ref(),
+        rust_decimal::Decimal::ONE,
+        model,
+        created_at,
+    )
 }
 
 #[cfg(test)]
@@ -357,11 +365,13 @@ fn import_records_with_cursor(
         } else {
             (model, display)
         };
+        let created_at = agy::timestamp(row).unwrap_or(0) / 1000;
         let [input_cost, output_cost, cache_cost, write_cost, total_cost] = costs(
             &tx,
             &mut pricing_cache,
             &model,
             [input, output, cache, write],
+            created_at,
         );
         // 原生库记的是精确值；读不到时耗时记 0、首字记 NULL，和其它会话日志一样表示「没有计时」。
         let timing = timing_by_step.get(&step);
@@ -387,7 +397,7 @@ fn import_records_with_cursor(
             cache_read_cost_usd,cache_creation_cost_usd,total_cost_usd,latency_ms,first_token_ms,status_code,
             session_id,provider_type,is_streaming,cost_multiplier,created_at,data_source,input_token_semantics
         ) VALUES (?1,'_agy_session','agy',?2,?10,?3,?4,?5,?6,?11,?12,?13,?14,?15,?16,?17,200,?7,'agy_session',1,'1',?8,'agy_session',?9)")?
-        .execute(params![id, model, input, output, cache, write, session, agy::timestamp(row).unwrap_or(0)/1000, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost, latency_ms, first_token_ms])?;
+        .execute(params![id, model, input, output, cache, write, session, created_at, INPUT_TOKEN_SEMANTICS_FRESH, display, input_cost, output_cost, cache_cost, write_cost, total_cost, latency_ms, first_token_ms])?;
         imported += 1;
     }
     if let Some(cursor) = sync_cursor {

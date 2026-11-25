@@ -248,6 +248,8 @@ fn sync_file(
             &record.usage,
             find_model_pricing(&tx, &record.model).as_ref(),
             Decimal::ONE,
+            &record.model,
+            record.created_ms / 1000,
         );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (

@@ -5171,3 +5171,159 @@ fn test_get_provider_today_spend_sums_only_today_and_provider() -> Result<(), Ap
     assert!((spend - 0.75).abs() < 1e-9, "unexpected spend: {spend}");
     Ok(())
 }
+
+#[test]
+fn deepseek_official_model_version_uses_peak_and_offpeak_prices() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    // 2026-03-02 10:00 Beijing (Monday peak) and 2023-11-15 06:13 Beijing (off-peak).
+    let peak = 1_772_416_800i64;
+    let offpeak = 1_699_999_980i64;
+    {
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "ds-peak",
+            "kimi",
+            "vendor",
+            "deepseek-v4.1-flash-1017",
+            "kimicode_session",
+            peak,
+            1_000_000,
+            1_000_000,
+            0,
+            0,
+            200,
+            "0",
+        )?;
+        insert_usage_log(
+            &conn,
+            "ds-offpeak",
+            "kimi",
+            "vendor",
+            "deepseek-v4.1-flash-1017",
+            "kimicode_session",
+            offpeak,
+            1_000_000,
+            1_000_000,
+            0,
+            0,
+            200,
+            "0",
+        )?;
+    }
+    assert_eq!(db.backfill_missing_usage_costs()?, 2);
+
+    let conn = lock_conn!(db.conn);
+    let row = |id: &str| -> Result<(String, String, String), AppError> {
+        Ok(conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?)
+    };
+    assert_eq!(
+        row("ds-peak")?,
+        (
+            "0.300000".to_string(),
+            "1.200000".to_string(),
+            "1.500000".to_string()
+        )
+    );
+    assert_eq!(
+        row("ds-offpeak")?,
+        (
+            "0.150000".to_string(),
+            "0.600000".to_string(),
+            "0.750000".to_string()
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn deepseek_model_version_suffix_falls_back_to_the_official_base_price() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = lock_conn!(db.conn);
+    let pricing = find_model_pricing(&conn, "deepseek-v4.1-flash-1201")
+        .expect("official version suffix should fall back");
+    assert_eq!(pricing.input_cost_per_million.to_string(), "0.3");
+    assert_eq!(pricing.output_cost_per_million.to_string(), "1.2");
+    Ok(())
+}
+
+#[test]
+fn deepseek_repricing_repairs_existing_costs_once() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    // 2023-11-15 06:13 Beijing = off-peak.
+    let offpeak = 1_699_999_980i64;
+    {
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "ds-wrong",
+            "kimi",
+            "vendor",
+            "deepseek-v4.1-flash-1017",
+            "kimicode_session",
+            offpeak,
+            1_000_000,
+            1_000_000,
+            0,
+            0,
+            200,
+            "9",
+        )?;
+    }
+    assert_eq!(db.reprice_deepseek_pricing()?, 1);
+    let conn = lock_conn!(db.conn);
+    let total: String = conn.query_row(
+        "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'ds-wrong'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(total, "0.750000");
+    drop(conn);
+    assert_eq!(db.reprice_deepseek_pricing()?, 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires CC_SWITCH_TEST_HOME pointing at an isolated copy of the config dir"]
+fn deepseek_pricing_local_smoke() -> Result<(), AppError> {
+    let test_home = std::env::var("CC_SWITCH_TEST_HOME")
+        .expect("set CC_SWITCH_TEST_HOME to an isolated copy of the config dir");
+    assert!(!test_home.trim().is_empty());
+    let db = Database::init()?;
+    let before: (i64, i64) = {
+        let conn = lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT COUNT(*), SUM(CAST(total_cost_usd AS REAL) = 0)
+             FROM proxy_request_logs
+             WHERE lower(COALESCE(pricing_model, model)) LIKE 'deepseek%'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+    };
+    let repriced = db.reprice_deepseek_pricing()?;
+    let backfilled = db.backfill_missing_usage_costs()?;
+    let after: (i64, i64, f64) = {
+        let conn = lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT COUNT(*), SUM(CAST(total_cost_usd AS REAL) = 0),
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0)
+             FROM proxy_request_logs
+             WHERE lower(COALESCE(pricing_model, model)) LIKE 'deepseek%'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?
+    };
+    eprintln!(
+        "DeepSeek pricing smoke: rows={} zero_before={} repriced={} backfilled={} zero_after={} total_usd={:.4}",
+        before.0, before.1, repriced, backfilled, after.1, after.2
+    );
+    assert_eq!(after.0, before.0);
+    assert_eq!(after.1, 0);
+    assert!(after.2 > 0.0);
+    Ok(())
+}

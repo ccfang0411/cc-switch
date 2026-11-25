@@ -33,6 +33,21 @@ impl CostCalculator {
     ///
     /// Codex/OpenAI Responses 与 Gemini 的输入 token 字段包含 cache read 部分；
     /// Claude/Anthropic 的 input_tokens 已经是 fresh input。
+    /// Calculate with DeepSeek's official peak / off-peak factor applied to the
+    /// pricing row before the ordinary app-specific path runs.
+    pub fn calculate_for_app_at(
+        app_type: &str,
+        usage: &TokenUsage,
+        pricing: &ModelPricing,
+        cost_multiplier: Decimal,
+        model: &str,
+        created_at: i64,
+    ) -> CostBreakdown {
+        let pricing =
+            crate::services::deepseek_pricing::adjusted_pricing(pricing, model, created_at);
+        Self::calculate_for_app(app_type, usage, &pricing, cost_multiplier)
+    }
+
     pub fn calculate_for_app(
         app_type: &str,
         usage: &TokenUsage,
@@ -97,15 +112,6 @@ impl CostCalculator {
             cache_creation_cost,
             total_cost,
         }
-    }
-
-    pub fn try_calculate_for_app(
-        app_type: &str,
-        usage: &TokenUsage,
-        pricing: Option<&ModelPricing>,
-        cost_multiplier: Decimal,
-    ) -> Option<CostBreakdown> {
-        pricing.map(|p| Self::calculate_for_app(app_type, usage, p, cost_multiplier))
     }
 }
 

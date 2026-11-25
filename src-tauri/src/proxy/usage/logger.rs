@@ -369,8 +369,12 @@ impl<'a> UsageLogger<'a> {
             log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
-        let cost =
-            CostCalculator::try_calculate_for_app(&app_type, &usage, pricing.as_ref(), multiplier);
+        let created_at = chrono::Utc::now().timestamp();
+        let cost = pricing.as_ref().map(|pricing| {
+            CostCalculator::calculate_for_app_at(
+                &app_type, &usage, pricing, multiplier, &model, created_at,
+            )
+        });
 
         let log = RequestLog {
             request_id,

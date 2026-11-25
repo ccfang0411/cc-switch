@@ -41,6 +41,7 @@ mod xai_oauth;
 
 mod s3_sync;
 mod usage;
+mod usage_sync;
 mod webdav_sync;
 mod workbuddy_account;
 mod workspace;
@@ -92,6 +93,7 @@ pub use xai_oauth::*;
 
 pub use s3_sync::*;
 pub use usage::*;
+pub use usage_sync::*;
 pub use webdav_sync::*;
 pub use workbuddy_account::*;
 pub use workspace::*;

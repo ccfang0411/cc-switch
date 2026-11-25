@@ -127,7 +127,7 @@ impl Database {
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
-                 input_token_semantics, total_cost_usd, avg_latency_ms)
+                 input_token_semantics, total_cost_usd, avg_latency_ms, source_device_id)
             SELECT
                 d, a, p, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
@@ -142,7 +142,8 @@ impl Database {
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
                           + new_lat * new_req)
                          / (COALESCE(old.request_count, 0) + new_req)
-                    ELSE 0 END
+                    ELSE 0 END,
+                ''
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
@@ -158,13 +159,14 @@ impl Database {
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as new_cost,
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
-                WHERE l.created_at < ?1 AND {effective_filter}
+                WHERE l.created_at < ?1 AND l.source_device_id = '' AND {effective_filter}
                 GROUP BY d, a, p, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
                 AND old.provider_id = agg.p AND old.model = agg.m
-                AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
+                AND old.request_model = agg.rm AND old.pricing_model = agg.pm
+                AND old.source_device_id = ''"
         );
 
         conn.execute(&aggregation_sql, [cutoff])
@@ -176,21 +178,36 @@ impl Database {
             "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
              SELECT 'gemini_session', request_id, request_id, 1
              FROM proxy_request_logs
-             WHERE created_at < ?1 AND data_source = 'gemini_session'",
+             WHERE created_at < ?1 AND data_source = 'gemini_session'
+               AND source_device_id = ''",
             [cutoff],
         )
         .map_err(|e| AppError::Database(format!("Recording session dedup tombstones failed: {e}")))?;
 
-        // INSERT uses the effective-log filter to exclude duplicate session rows.
-        // DELETE intentionally prunes all old details so those duplicates are discarded.
-        let deleted = conn
+        // 本地明细照旧清理；对端明细只有在同一天已有对端汇总时才删，
+        // 否则对端还没同步归档数据，删掉会让总量变少。
+        let local_deleted = conn
             .execute(
-                "DELETE FROM proxy_request_logs WHERE created_at < ?1",
+                "DELETE FROM proxy_request_logs
+                 WHERE created_at < ?1 AND source_device_id = ''",
                 [cutoff],
             )
             .map_err(|e| AppError::Database(format!("Pruning old logs failed: {e}")))?;
+        let peer_deleted = conn
+            .execute(
+                "DELETE FROM proxy_request_logs AS l
+                 WHERE l.created_at < ?1
+                   AND l.source_device_id <> ''
+                   AND EXISTS (
+                       SELECT 1 FROM usage_daily_rollups r
+                       WHERE r.source_device_id = l.source_device_id
+                         AND r.date = date(l.created_at, 'unixepoch', 'localtime')
+                   )",
+                [cutoff],
+            )
+            .map_err(|e| AppError::Database(format!("Pruning peer logs failed: {e}")))?;
 
-        Ok(deleted as u64)
+        Ok((local_deleted + peer_deleted) as u64)
     }
 }
 

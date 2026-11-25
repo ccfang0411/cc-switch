@@ -473,6 +473,16 @@ export function RequestLogTable({
       model: (
         <td className={cn(usageTable.td, usageTable.mono)}>
           <span title={modelTitle}>{log.model}</span>
+          {log.sourceDeviceName ? (
+            <span
+              className="ml-1.5 rounded-[4px] border border-border px-1 py-0.5 text-caption font-normal text-fg-3"
+              title={t("usage.multiDevice.fromDevice", {
+                name: log.sourceDeviceName,
+              })}
+            >
+              {log.sourceDeviceName}
+            </span>
+          ) : null}
         </td>
       ),
       freshInput: (

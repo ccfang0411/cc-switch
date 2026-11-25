@@ -75,6 +75,8 @@ fn sync_from_database(
                     &usage,
                     find_model_pricing(&tx, model).as_ref(),
                     Decimal::ONE,
+                    model,
+                    ts / 1000,
                 );
                 total
             }

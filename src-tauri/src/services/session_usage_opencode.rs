@@ -573,6 +573,8 @@ fn insert_opencode_message(
                 &usage,
                 find_model_pricing(&conn, &msg.model_id).as_ref(),
                 Decimal::ONE,
+                &msg.model_id,
+                created_at,
             )
         };
 

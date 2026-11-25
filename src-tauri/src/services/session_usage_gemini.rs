@@ -308,7 +308,14 @@ fn insert_gemini_session_entry(
         }
 
         let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-            compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
+            compute_gemini_entry_costs(
+                &tx,
+                model,
+                tokens.input,
+                output_tokens,
+                tokens.cached,
+                created_at,
+            );
 
         let updated = tx
             .prepare_cached(
@@ -383,7 +390,14 @@ fn insert_gemini_session_entry(
     }
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
+        compute_gemini_entry_costs(
+            &tx,
+            model,
+            tokens.input,
+            output_tokens,
+            tokens.cached,
+            created_at,
+        );
 
     record_gemini_dedup_tombstone(&tx, request_id)?;
 
@@ -448,6 +462,7 @@ fn compute_gemini_entry_costs(
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
+    created_at: i64,
 ) -> [String; 5] {
     let usage = TokenUsage {
         input_tokens,
@@ -464,6 +479,8 @@ fn compute_gemini_entry_costs(
         &usage,
         find_model_pricing(conn, model).as_ref(),
         Decimal::ONE,
+        model,
+        created_at,
     )
 }
 

@@ -294,6 +294,25 @@ impl Default for S3SyncSettings {
     }
 }
 
+/// 多终端用量汇总的开关。凭证复用 `s3_sync`，这里只存设备级偏好。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+}
+
+impl Default for UsageSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: true,
+        }
+    }
+}
+
 impl S3SyncSettings {
     pub fn validate(&self) -> Result<(), crate::error::AppError> {
         if self.bucket.trim().is_empty() {
@@ -747,6 +766,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
 
+    // ===== 多终端用量汇总 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_sync: Option<UsageSyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -861,6 +884,7 @@ impl Default for AppSettings {
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             s3_sync: None,
+            usage_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -1584,6 +1608,16 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
 }
 
 // ===== S3 同步设置管理函数 =====
+
+pub fn get_usage_sync_settings() -> UsageSyncSettings {
+    get_settings().usage_sync.unwrap_or_default()
+}
+
+pub fn set_usage_sync_settings(settings: UsageSyncSettings) -> Result<(), AppError> {
+    let mut current = get_settings();
+    current.usage_sync = Some(settings);
+    update_settings(current)
+}
 
 pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
     read_settings().s3_sync.clone()

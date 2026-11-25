@@ -578,7 +578,14 @@ fn insert_grok_session_entry(
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
         Some(p) => {
-            let cost = CostCalculator::calculate_for_app("grokbuild", &usage, &p, multiplier);
+            let cost = CostCalculator::calculate_for_app_at(
+                "grokbuild",
+                &usage,
+                &p,
+                multiplier,
+                model,
+                created_at,
+            );
             let total = match reported {
                 Some(reported) if !cost_is_partial => {
                     // 偏差超 1%（微额下限 1e-6）即本地定价漂移——xAI 调价时

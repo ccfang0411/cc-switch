@@ -270,6 +270,8 @@ fn sync_file(
             &request.usage,
             find_model_pricing(&tx, priced_as).as_ref(),
             Decimal::ONE,
+            priced_as,
+            request.created_at_ms / 1000,
         );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
@@ -1029,11 +1031,12 @@ mod tests {
         assert_eq!(
             rows[0],
             (
+                // 2023-11-15 06:13 北京时间：DeepSeek 空闲档，官方价减半。
                 "deepseek-flash".to_string(),
-                "0.3".to_string(),
-                "1.2".to_string(),
-                "0.006".to_string(),
-                "1.506".to_string(),
+                "0.15".to_string(),
+                "0.60".to_string(),
+                "0.0030".to_string(),
+                "0.7530".to_string(),
             )
         );
         assert_eq!(rows[1].0, "unpriced-model");
@@ -1095,7 +1098,8 @@ mod tests {
             .unwrap();
         assert_eq!(row.0, "global:deepseek-v4.1-flash");
         assert_eq!(row.1.as_deref(), Some("deepseek-v4.1-flash"));
-        assert_eq!(row.2, "3");
+        // 2023-11-15 06:13 北京时间：自定义 1/2 定价在空闲档减半。
+        assert_eq!(row.2, "1.5");
     }
 
     #[test]

@@ -700,8 +700,16 @@ fn insert_record(conn: &rusqlite::Connection, record: &KimiUsageRecord) -> Resul
         return Ok(false);
     }
 
-    let costs = find_model_pricing(conn, &record.model)
-        .map(|pricing| CostCalculator::calculate_for_app(APP_TYPE, &usage, &pricing, Decimal::ONE));
+    let costs = find_model_pricing(conn, &record.model).map(|pricing| {
+        CostCalculator::calculate_for_app_at(
+            APP_TYPE,
+            &usage,
+            &pricing,
+            Decimal::ONE,
+            &record.model,
+            record.created_at,
+        )
+    });
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = costs.map_or(
         (
             Decimal::ZERO,
@@ -903,11 +911,12 @@ mod tests {
         assert_eq!(row.5, 50);
         assert_eq!(row.6, 0);
         assert_eq!(row.7, INPUT_TOKEN_SEMANTICS_FRESH);
-        assert_eq!(row.8, "0.0001");
-        assert_eq!(row.9, "0.00004");
-        assert_eq!(row.10, "0.000005");
+        // 1970-01-01 08:16 北京时间：DeepSeek 空闲档，1/2 定价减半。
+        assert_eq!(row.8, "0.00005");
+        assert_eq!(row.9, "0.00002");
+        assert_eq!(row.10, "0.0000025");
         assert_eq!(row.11, "0");
-        assert_eq!(row.12, "0.000145");
+        assert_eq!(row.12, "0.0000725");
         assert_eq!(row.13, 1500);
         assert_eq!(row.14, SESSION);
         assert_eq!(row.15, DATA_SOURCE);

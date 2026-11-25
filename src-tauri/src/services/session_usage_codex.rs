@@ -2687,8 +2687,14 @@ fn insert_codex_session_entry_on_conn(
     let pricing = pricing_cache
         .entry(model.to_string())
         .or_insert_with(|| find_codex_pricing(conn, model));
-    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
-        cost_columns("codex", &usage, pricing.as_ref(), Decimal::ONE);
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] = cost_columns(
+        "codex",
+        &usage,
+        pricing.as_ref(),
+        Decimal::ONE,
+        model,
+        created_at,
+    );
 
     let inserted_rows = conn
         .prepare_cached(

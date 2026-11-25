@@ -1258,8 +1258,14 @@ fn insert_pi_record(
     };
     let costs = record.costs.reported().or_else(|| {
         find_model_pricing(conn, &record.model).map(|pricing| {
-            let calculated =
-                CostCalculator::calculate_for_app(flavor.app_type, &usage, &pricing, Decimal::ONE);
+            let calculated = CostCalculator::calculate_for_app_at(
+                flavor.app_type,
+                &usage,
+                &pricing,
+                Decimal::ONE,
+                &record.model,
+                record.created_at,
+            );
             (
                 calculated.input_cost,
                 calculated.output_cost,

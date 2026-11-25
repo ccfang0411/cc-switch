@@ -29,6 +29,9 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  /** 仅多终端汇总导入的行有值；本机行为空 */
+  sourceDeviceId?: string;
+  sourceDeviceName?: string;
 }
 
 export interface SessionSyncResult {

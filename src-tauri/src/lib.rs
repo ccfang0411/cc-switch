@@ -1273,6 +1273,7 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::usage_sync::start_worker(app_state.db.clone());
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
             app.manage(services::kimi_oauth::KimiOAuthManager::default());
@@ -1445,6 +1446,9 @@ pub fn run() {
                             .await;
                         let task = tauri::async_runtime::spawn_blocking(move || {
                             if backfill {
+                                if let Err(error) = db.reprice_deepseek_pricing() {
+                                    log::warn!("DeepSeek pricing startup repair failed: {error}");
+                                }
                                 if let Err(error) = db.backfill_missing_usage_costs() {
                                     log::warn!("Usage cost startup backfill failed: {error}");
                                 }
@@ -1798,6 +1802,10 @@ pub fn run() {
             commands::fetch_models_dev,
             // Session usage sync
             commands::sync_session_usage,
+            commands::usage_sync_status,
+            commands::usage_sync_save_settings,
+            commands::usage_sync_now,
+            commands::usage_sync_forget_device,
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
             commands::fetch_exchange_rates,

@@ -1220,11 +1220,19 @@ fn session_costs(
         model: Some(msg.model.clone()),
         message_id: None,
     };
+    let created_at = msg
+        .timestamp
+        .as_deref()
+        .and_then(parse_timestamp_millis)
+        .map(|ms| ms / 1000)
+        .unwrap_or(0);
     cost_columns(
         "claude",
         &usage,
         pricing_cache.get(conn, &msg.model),
         Decimal::ONE,
+        &msg.model,
+        created_at,
     )
 }
 
@@ -1235,11 +1243,15 @@ pub(crate) fn cost_columns(
     usage: &TokenUsage,
     pricing: Option<&ModelPricing>,
     multiplier: Decimal,
+    model: &str,
+    created_at: i64,
 ) -> [String; 5] {
     let Some(pricing) = pricing else {
         return std::array::from_fn(|_| "0".to_string());
     };
-    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
+    let cost = CostCalculator::calculate_for_app_at(
+        app_type, usage, pricing, multiplier, model, created_at,
+    );
     [
         cost.input_cost,
         cost.output_cost,

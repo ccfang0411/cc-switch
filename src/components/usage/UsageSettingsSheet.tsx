@@ -26,6 +26,7 @@ import { KNOWN_APP_TYPES } from "@/types/usage";
 import { cn } from "@/lib/utils";
 import { getResolvedLang, joinNames } from "./format";
 import { UsageDisplaySection } from "./UsageDisplaySection";
+import { UsageSyncSection } from "./UsageSyncSection";
 import { settingsCardClass, settingsGroupTitleClass } from "./settingsStyles";
 
 interface UsageSettingsSheetProps {
@@ -331,6 +332,8 @@ export function UsageSettingsSheet({
               onChange={onUsageDisplayChange}
             />
           )}
+
+          <UsageSyncSection />
 
           <SettingsGroup title={t("usage.tabs.pricing")}>
             <div className={cn(settingsCardClass, "flex-row items-center")}>

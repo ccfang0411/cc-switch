@@ -495,6 +495,37 @@ export const handlers = [
   ),
 
   // 侧栏：今日花费、授权中心提醒；「应用」页：Claude Desktop 接入状态
+  http.post(`${TAURI_ENDPOINT}/usage_sync_status`, () =>
+    HttpResponse.json({
+      enabled: false,
+      autoSync: true,
+      deviceId: "test-device",
+      deviceName: "Test Mac",
+      peers: [],
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/usage_sync_save_settings`, () =>
+    HttpResponse.json({
+      enabled: false,
+      autoSync: true,
+      deviceId: "test-device",
+      deviceName: "Test Mac",
+      peers: [],
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/usage_sync_now`, () =>
+    HttpResponse.json({
+      enabled: true,
+      autoSync: true,
+      deviceId: "test-device",
+      deviceName: "Test Mac",
+      peers: [],
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/usage_sync_forget_device`, () =>
+    HttpResponse.json(null),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/get_usage_summary`, () =>
     success({
       totalRequests: 0,

@@ -145,6 +145,13 @@ function useDetailSections(request: RequestLog) {
     },
     { key: "model", label: t("usage.model"), value: request.model, mono: true },
   ];
+  if (request.sourceDeviceName) {
+    basic.push({
+      key: "device",
+      label: t("usage.multiDevice.deviceLabel"),
+      value: request.sourceDeviceName,
+    });
+  }
   // 会话日志的供应商就叫「会话日志」，ID 是内部的 _session：不再重复列「供应商 ID」和「来源」
   if (isProxy) {
     basic.splice(3, 0, {

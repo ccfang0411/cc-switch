@@ -350,17 +350,23 @@ pub struct RequestLogDetail {
     /// 写入时实际用于计价的模型名。None = v11 前的历史行，"" = 未计价的错误行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_model: Option<String>,
+    /// 本机行为空；从其他终端汇入的行带来源设备。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_device_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_device_name: String,
 }
 
-/// 把 27 列的查询结果映射为 `RequestLogDetail`。
+/// 把 29 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 27 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 29 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..)`
+///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..),
+///  source_device_id, source_device_name`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -394,6 +400,8 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         pricing_model: row.get(24)?,
         input_token_semantics: row.get::<_, i64>(25)?,
         fresh_input_tokens: row.get::<_, i64>(26)? as u32,
+        source_device_id: row.get(27)?,
+        source_device_name: row.get(28)?,
     })
 }
 
@@ -2224,7 +2232,8 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens,
+                    l.source_device_id, l.source_device_name
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -2241,7 +2250,7 @@ impl Database {
 
         for row in rows {
             let mut log = row?;
-            Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache)?;
+            Self::maybe_backfill_log_costs(&conn, &mut log, &mut pricing_cache, false)?;
             logs.push(log);
         }
 
@@ -2269,7 +2278,8 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens,
+                    l.source_device_id, l.source_device_name
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -2279,7 +2289,7 @@ impl Database {
         match result {
             Ok(mut detail) => {
                 let mut pricing_cache = HashMap::new();
-                Self::maybe_backfill_log_costs(&conn, &mut detail, &mut pricing_cache)?;
+                Self::maybe_backfill_log_costs(&conn, &mut detail, &mut pricing_cache, false)?;
                 Ok(Some(detail))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -2325,7 +2335,8 @@ impl Database {
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
                         data_source, pricing_model, input_token_semantics,
-                        {fresh_input} AS fresh_input_tokens
+                        {fresh_input} AS fresh_input_tokens,
+                    source_device_id, source_device_name
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -2358,7 +2369,7 @@ impl Database {
         let mut updated = 0u64;
         let mut pricing_cache = HashMap::new();
         for log in &mut logs {
-            if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache)? {
+            if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache, false)? {
                 updated += 1;
             }
         }
@@ -2372,11 +2383,86 @@ impl Database {
         Ok(updated)
     }
 
+    /// 一次性把 DeepSeek V4 历史行按官方峰谷价重算。
+    pub(crate) fn reprice_deepseek_pricing(&self) -> Result<u64, AppError> {
+        const REPAIR: &str = "deepseek-official-v1";
+        let conn = lock_conn!(self.conn);
+        let applied: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM usage_pricing_repairs WHERE repair = ?1)",
+                [REPAIR],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("查询 DeepSeek 重算标记失败: {e}")))?;
+        if applied {
+            return Ok(0);
+        }
+
+        let fresh_input = fresh_input_sql("");
+        let sql = format!(
+            "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
+                    cost_multiplier,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                    cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
+                    first_token_ms, duration_ms, status_code, error_message, created_at,
+                    data_source, pricing_model, input_token_semantics,
+                    {fresh_input} AS fresh_input_tokens,
+                    source_device_id, source_device_name
+             FROM proxy_request_logs
+             WHERE lower(COALESCE(pricing_model, model)) LIKE 'deepseek%'
+                OR lower(model) LIKE 'deepseek%'"
+        );
+        let mut logs = {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], row_to_request_log_detail)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        logs.retain(|log| {
+            let priced_as = log
+                .pricing_model
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&log.model);
+            crate::services::deepseek_pricing::uses_dual_pricing(priced_as)
+                || crate::services::deepseek_pricing::uses_dual_pricing(&log.model)
+        });
+        if logs.is_empty() {
+            conn.execute(
+                "INSERT OR IGNORE INTO usage_pricing_repairs (repair, applied_at) VALUES (?1, ?2)",
+                rusqlite::params![REPAIR, chrono::Utc::now().timestamp()],
+            )?;
+            return Ok(0);
+        }
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Database(format!("启动 DeepSeek 重算事务失败: {e}")))?;
+        let mut updated = 0u64;
+        let mut pricing_cache = HashMap::new();
+        for log in &mut logs {
+            if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache, true)? {
+                updated += 1;
+            }
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO usage_pricing_repairs (repair, applied_at) VALUES (?1, ?2)",
+            rusqlite::params![REPAIR, chrono::Utc::now().timestamp()],
+        )?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 DeepSeek 重算事务失败: {e}")))?;
+        if updated > 0 {
+            log::info!("已按 DeepSeek 官方峰谷价重算 {updated} 条历史用量");
+        }
+        Ok(updated)
+    }
+
     /// 尝试为单条 log 回填成本字段。返回是否实际写入（true=已 UPDATE，false=跳过）。
     fn maybe_backfill_log_costs(
         conn: &Connection,
         log: &mut RequestLogDetail,
         pricing_cache: &mut HashMap<String, PricingInfo>,
+        force: bool,
     ) -> Result<bool, AppError> {
         let existing_cost = rust_decimal::Decimal::from_str(&log.total_cost_usd)
             .unwrap_or(rust_decimal::Decimal::ZERO);
@@ -2386,7 +2472,7 @@ impl Database {
             || log.cache_read_tokens > 0
             || log.cache_creation_tokens > 0;
 
-        if has_cost || !has_usage {
+        if (!force && has_cost) || !has_usage {
             return Ok(false);
         }
 
@@ -2407,6 +2493,19 @@ impl Database {
         let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
             Some(info) => info,
             None => return Ok(false),
+        };
+        let priced_as = log
+            .pricing_model
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&log.model);
+        let time_multiplier =
+            crate::services::deepseek_pricing::time_multiplier(priced_as, log.created_at);
+        let pricing = PricingInfo {
+            input: pricing.input * time_multiplier,
+            output: pricing.output * time_multiplier,
+            cache_read: pricing.cache_read * time_multiplier,
+            cache_creation: pricing.cache_creation * time_multiplier,
         };
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
@@ -2443,6 +2542,15 @@ impl Database {
         let total_cost = base_total * multiplier;
         // 单价全为 0（免费模型）时算出来仍是 0，写回去下次照样当缺价，只是白白 UPDATE。
         if total_cost.is_zero() {
+            return Ok(false);
+        }
+        if force
+            && log.input_cost_usd == cost_string(input_cost)
+            && log.output_cost_usd == cost_string(output_cost)
+            && log.cache_read_cost_usd == cost_string(cache_read_cost)
+            && log.cache_creation_cost_usd == cost_string(cache_creation_cost)
+            && log.total_cost_usd == cost_string(total_cost)
+        {
             return Ok(false);
         }
 
@@ -2852,6 +2960,9 @@ fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
         {
             push_derived(&mut queue, candidate.replace('.', "-"));
         }
+        if let Some(stripped) = strip_deepseek_version_suffix(&candidate) {
+            push_derived(&mut queue, stripped);
+        }
         if let Some(stripped) = strip_model_date_suffix(&candidate) {
             push_derived(&mut queue, stripped);
         }
@@ -3016,6 +3127,22 @@ fn strip_bedrock_model_version_suffix(model_id: &str) -> Option<String> {
     let (base, suffix) = model_id.rsplit_once("-v")?;
     (!base.is_empty() && !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
         .then(|| base.to_string())
+}
+
+/// DeepSeek's official model version suffix (`DeepSeek-V4.1-Flash-1017`).
+/// Only 4-digit MMDD tails on `deepseek-` IDs qualify; other vendors keep
+/// their existing date-suffix rules.
+fn strip_deepseek_version_suffix(model_id: &str) -> Option<String> {
+    if !model_id.to_ascii_lowercase().starts_with("deepseek-") {
+        return None;
+    }
+    let (base, suffix) = model_id.rsplit_once('-')?;
+    if base.is_empty() || suffix.len() != 4 || !suffix.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let month: u32 = suffix[0..2].parse().ok()?;
+    let day: u32 = suffix[2..4].parse().ok()?;
+    ((1..=12).contains(&month) && (1..=31).contains(&day)).then(|| base.to_string())
 }
 
 fn strip_model_date_suffix(model_id: &str) -> Option<String> {

@@ -180,6 +180,8 @@ fn sync_file(
             usage,
             find_model_pricing(&tx, &entry.model).as_ref(),
             Decimal::ONE,
+            &entry.model,
+            entry.created_ms / 1000,
         );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (

@@ -261,7 +261,9 @@ impl Database {
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            data_source TEXT NOT NULL DEFAULT 'proxy',
+            source_device_id TEXT NOT NULL DEFAULT '',
+            source_device_name TEXT NOT NULL DEFAULT ''
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -344,7 +346,8 @@ impl Database {
                 input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+                source_device_id TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, source_device_id)
             )",
             [],
         )
@@ -373,6 +376,41 @@ impl Database {
 
         // 修复跑过未发布开发版 v24 的库：parser_state 随 v24 定稿，不单独 bump 版本
         Self::add_column_if_missing(conn, "session_log_sync", "parser_state", "TEXT")?;
+        // 多终端用量同步：设备身份和每个对端的导入状态都是本机专属，
+        // 不能跟着“配置云同步”复制到另一台设备。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_sync_device (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_manifest_hash TEXT,
+                last_upload_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_sync_peer_state (
+                device_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                manifest_hash TEXT,
+                etag TEXT,
+                last_sync_at INTEGER,
+                imported_details INTEGER NOT NULL DEFAULT 0,
+                imported_rollups INTEGER NOT NULL DEFAULT 0,
+                error TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_pricing_repairs (
+                repair TEXT PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         // Session detail rows are pruned after rollup, so request IDs needed
         // for fork/rewrite deduplication live in a compact durable ledger.
@@ -755,6 +793,10 @@ impl Database {
                     27 => {
                         kimi_compat::migrate(conn)?;
                         Self::set_user_version(conn, 28)?;
+                    }
+                    28 => {
+                        Self::migrate_v28_to_v29(conn)?;
+                        Self::set_user_version(conn, 29)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -2622,6 +2664,15 @@ impl Database {
                 "1.2",
                 "0.006",
                 "0",
+            ), // 官方当前模型 ID（价页“MODEL VERSION”列）：DeepSeek-V4.1-Flash-1017。
+            // 上游会把版本号带进 model 名；不单列会精确查不到、只能靠前缀兜底或按 0 计费。
+            (
+                "deepseek-v4.1-flash-1017",
+                "DeepSeek V4.1 Flash 1017",
+                "0.3",
+                "1.2",
+                "0.006",
+                "0",
             ),
             (
                 "deepseek-v4-flash",
@@ -4078,6 +4129,132 @@ impl Database {
             }
         }
         Ok(false)
+    }
+
+    /// v28 -> v29：多终端用量维度 + DeepSeek 官方计价修复标记。
+    fn migrate_v28_to_v29(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "source_device_id",
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "source_device_name",
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+        }
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_sync_device (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_manifest_hash TEXT,
+                last_upload_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_sync_peer_state (
+                device_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                manifest_hash TEXT,
+                etag TEXT,
+                last_sync_at INTEGER,
+                imported_details INTEGER NOT NULL DEFAULT 0,
+                imported_rollups INTEGER NOT NULL DEFAULT 0,
+                error TEXT
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_pricing_repairs (
+                repair TEXT PRIMARY KEY,
+                applied_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 日汇总加入来源设备维度；旧行全部是本机数据。
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            conn.execute(
+                "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v28",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("重命名用量日汇总表失败: {e}")))?;
+            conn.execute(
+                "CREATE TABLE usage_daily_rollups (
+                    date TEXT NOT NULL,
+                    app_type TEXT NOT NULL,
+                    provider_id TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    request_model TEXT NOT NULL DEFAULT '',
+                    pricing_model TEXT NOT NULL DEFAULT '',
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    success_count INTEGER NOT NULL DEFAULT 0,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                    input_token_semantics INTEGER NOT NULL DEFAULT 0,
+                    total_cost_usd TEXT NOT NULL DEFAULT '0',
+                    avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                    source_device_id TEXT NOT NULL DEFAULT '',
+                    PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model, source_device_id)
+                )",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("重建用量日汇总表失败: {e}")))?;
+            // 正常 v28 库有完整列；测试/损坏库可能只是最小骨架，无数据可迁。
+            let can_copy = Self::has_column(conn, "usage_daily_rollups_v28", "app_type")?
+                && Self::has_column(conn, "usage_daily_rollups_v28", "provider_id")?
+                && Self::has_column(conn, "usage_daily_rollups_v28", "model")?;
+            if can_copy {
+                conn.execute(
+                    "INSERT INTO usage_daily_rollups (
+                        date, app_type, provider_id, model, request_model, pricing_model,
+                        request_count, success_count, input_tokens, output_tokens,
+                        cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                        total_cost_usd, avg_latency_ms, source_device_id
+                     )
+                     SELECT date, app_type, provider_id, model, request_model, pricing_model,
+                            request_count, success_count, input_tokens, output_tokens,
+                            cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                            total_cost_usd, avg_latency_ms, ''
+                     FROM usage_daily_rollups_v28",
+                    [],
+                )
+                .map_err(|e| AppError::Database(format!("迁移用量日汇总数据失败: {e}")))?;
+            }
+            conn.execute("DROP TABLE usage_daily_rollups_v28", [])
+                .map_err(|e| AppError::Database(format!("删除旧用量日汇总表失败: {e}")))?;
+        }
+
+        // 旧种子把 deepseek-flash 记成空闲价；只有值完全等于旧默认时才改，
+        // 避免覆盖用户自己填的价格。
+        if Self::table_exists(conn, "model_pricing")? {
+            conn.execute(
+                "UPDATE model_pricing
+                 SET input_cost_per_million = '0.3',
+                     output_cost_per_million = '1.2',
+                     cache_read_cost_per_million = '0.006'
+                 WHERE model_id = 'deepseek-flash'
+                   AND input_cost_per_million = '0.15'
+                   AND output_cost_per_million = '0.6'
+                   AND cache_read_cost_per_million = '0.003'",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("更新 DeepSeek 官方定价失败: {e}")))?;
+        }
+
+        log::info!("v28 -> v29 迁移完成：多终端用量维度与 DeepSeek 官方定价");
+        Ok(())
     }
 
     fn add_column_if_missing(

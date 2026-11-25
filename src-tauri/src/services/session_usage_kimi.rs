@@ -364,7 +364,7 @@ fn sync_file(
             result.skipped += 1;
             continue;
         }
-        let amounts = costs(&tx, model, &usage, Decimal::ONE);
+        let amounts = costs(&tx, model, &usage, Decimal::ONE, completed);
         tx.execute("INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
@@ -395,12 +395,15 @@ fn costs(
     model: &str,
     usage: &TokenUsage,
     multiplier: Decimal,
+    created_at: i64,
 ) -> [String; 5] {
     cost_columns(
         "kimi",
         usage,
         find_model_pricing(conn, model).as_ref(),
         multiplier,
+        model,
+        created_at,
     )
 }
 
@@ -454,6 +457,7 @@ fn refresh_existing(
             model,
             usage,
             multiplier.parse().unwrap_or(Decimal::ONE),
+            created,
         );
         conn.execute(
             "UPDATE proxy_request_logs SET model = ?2, request_model = CASE WHEN request_model = model OR request_model IS NULL OR request_model = 'unknown' THEN ?2 ELSE request_model END,
