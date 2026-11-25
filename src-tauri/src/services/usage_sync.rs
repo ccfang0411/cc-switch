@@ -323,7 +323,8 @@ fn build_snapshot(
                     cache_creation_tokens: row.get(11)?,
                     input_token_semantics: row.get(12)?,
                     total_cost_usd: row.get(13)?,
-                    avg_latency_ms: row.get(14)?,
+                    // 老汇总表的 CASE/AVG 可能把整数写成 REAL；快照字段保持整数。
+                    avg_latency_ms: row.get::<_, f64>(14)?.round() as i64,
                 })
             })
             .map_err(|e| AppError::Database(format!("读取本机用量汇总失败: {e}")))?;
@@ -868,6 +869,31 @@ mod tests {
              VALUES (?1, 'p', 'kimi', ?2, 10, 20, 1000, 200, ?3, 'kimicode_session')",
             params![request_id, model, created_at],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_reads_real_avg_latency_from_rollups() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO usage_daily_rollups
+                    (date, app_type, provider_id, model, request_model, pricing_model,
+                     request_count, success_count, input_tokens, output_tokens,
+                     cache_read_tokens, cache_creation_tokens, input_token_semantics,
+                     total_cost_usd, avg_latency_ms, source_device_id)
+                 VALUES ('2026-01-01', 'kimi', 'p', 'deepseek-flash', '', '', 2, 2,
+                         10, 20, 0, 0, 1, '0.1', 1234.75, '')",
+                [],
+            )?;
+        }
+        let device = UsageSyncDevice {
+            id: "self".to_string(),
+            name: "Self".to_string(),
+        };
+        let (manifest, _) = build_snapshot(&db, &device)?;
+        assert_eq!(manifest.rollup_count, 1);
         Ok(())
     }
 
