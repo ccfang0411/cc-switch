@@ -578,10 +578,6 @@ pub(crate) fn native_provider_key(id: &str, config: &Value) -> Result<String, Ap
     compat::native_id(&json!({}), id, Some(&canonical_config(id, config)?))
 }
 
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
-}
-
 /// Resolve the selected native alias through models, not by splitting its name:
 /// aliases can be arbitrary and provider ids may contain punctuation.
 pub(crate) fn current_provider() -> Result<String, AppError> {

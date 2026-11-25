@@ -291,12 +291,10 @@ mod tests {
             "kimi"
         );
         for table in ["mcp_servers", "skills"] {
-            assert_eq!(
-                conn.query_row(&format!("SELECT enabled_kimi FROM {table}"), [], |row| row
-                    .get::<_, bool>(
-                    0
-                ))?,
-                true
+            assert!(
+                conn.query_row(&format!("SELECT enabled_kimi FROM {table}"), [], |row| {
+                    row.get::<_, bool>(0)
+                })?
             );
             assert!(Database::has_column(&conn, table, "enabled_agy")?);
         }

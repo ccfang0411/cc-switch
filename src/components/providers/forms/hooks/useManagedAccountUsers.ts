@@ -18,6 +18,7 @@ export function useManagedAccountUsers(
   const { data: codex } = useProvidersQuery("codex");
   const { data: kimi } = useProvidersQuery("kimi");
   const { data: agy } = useProvidersQuery("agy");
+  const { data: grokbuild } = useProvidersQuery("grokbuild");
   const { data: copilot } = useProvidersQuery("copilot");
   const { data: workbuddy } = useProvidersQuery("workbuddy");
 
@@ -29,6 +30,7 @@ export function useManagedAccountUsers(
         codex: codex?.providers,
         kimi: kimi?.providers,
         agy: agy?.providers,
+        grokbuild: grokbuild?.providers,
         copilot: copilot?.providers,
         workbuddy: workbuddy?.providers,
       }),
@@ -40,6 +42,7 @@ export function useManagedAccountUsers(
       codex,
       kimi,
       agy,
+      grokbuild,
       copilot,
       workbuddy,
     ],

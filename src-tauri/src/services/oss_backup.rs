@@ -390,13 +390,15 @@ mod tests {
         use axum::{body::Bytes, extract::State, http::HeaderMap, routing::put, Router};
         use std::sync::{Arc, Mutex};
 
+        type StoredBody = Arc<Mutex<(Vec<u8>, bool)>>;
+
         for corrupt in [false, true] {
             let stored = Arc::new(Mutex::new((Vec::<u8>::new(), false)));
             let app = Router::new()
                 .route(
                     "/test-bucket/backup.sql",
                     put(
-                        |State(stored): State<Arc<Mutex<(Vec<u8>, bool)>>>,
+                        |State(stored): State<StoredBody>,
                          headers: HeaderMap,
                          bytes: Bytes| async move {
                             let private = headers.get("x-amz-acl").is_some_and(|h| h == "private")
@@ -407,7 +409,7 @@ mod tests {
                         },
                     )
                     .get(
-                        move |State(stored): State<Arc<Mutex<(Vec<u8>, bool)>>>| async move {
+                        move |State(stored): State<StoredBody>| async move {
                             if corrupt {
                                 b"corrupt".to_vec()
                             } else {

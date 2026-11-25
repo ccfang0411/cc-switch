@@ -205,6 +205,61 @@ impl ProviderAdapter for KimiAdapter {
     }
 }
 
+/// Keep the account catalog's exact reasoning tier after the generic Anthropic bridge.
+/// This is scoped to Kimi's selected Codex model, never a global model-name whitelist.
+pub(crate) fn apply_codex_reasoning_selection(
+    outbound: &mut JsonValue,
+    inbound: &JsonValue,
+    provider: &Provider,
+) {
+    if !provider.is_codex_oauth() {
+        return;
+    }
+    let model_id = outbound
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    let models = crate::kimi_config::provider_models(&provider.settings_config);
+    let Some(model) = models.into_iter().find(|model| {
+        model.get("model").and_then(JsonValue::as_str) == Some(model_id)
+            || crate::kimi_config::model_alias(model) == Some(model_id)
+    }) else {
+        return;
+    };
+    let Some(levels) = model.get("support_efforts").and_then(JsonValue::as_array) else {
+        return;
+    };
+    let allowed = |effort: &str| levels.iter().any(|level| level.as_str() == Some(effort));
+    let explicit = inbound
+        .pointer("/output_config/effort")
+        .or_else(|| inbound.pointer("/reasoning/effort"))
+        .and_then(JsonValue::as_str)
+        .filter(|effort| allowed(effort));
+    let default = model
+        .get("default_effort")
+        .and_then(JsonValue::as_str)
+        .filter(|effort| allowed(effort));
+    let disabled = inbound
+        .pointer("/thinking/type")
+        .and_then(JsonValue::as_str)
+        == Some("disabled");
+    let effort = if disabled {
+        if allowed("none") {
+            Some("none")
+        } else {
+            levels.first().and_then(JsonValue::as_str)
+        }
+    } else {
+        explicit.or(default)
+    };
+    if let Some(effort) = effort {
+        if !outbound.get("reasoning").is_some_and(JsonValue::is_object) {
+            outbound["reasoning"] = serde_json::json!({});
+        }
+        outbound["reasoning"]["effort"] = JsonValue::String(effort.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,60 +449,5 @@ mod tests {
             adapter.build_url("https://relay.example/anthropic", "/v1/messages"),
             "https://relay.example/anthropic/v1/messages"
         );
-    }
-}
-
-/// Keep the account catalog's exact reasoning tier after the generic Anthropic bridge.
-/// This is scoped to Kimi's selected Codex model, never a global model-name whitelist.
-pub(crate) fn apply_codex_reasoning_selection(
-    outbound: &mut JsonValue,
-    inbound: &JsonValue,
-    provider: &Provider,
-) {
-    if !provider.is_codex_oauth() {
-        return;
-    }
-    let model_id = outbound
-        .get("model")
-        .and_then(JsonValue::as_str)
-        .unwrap_or_default();
-    let models = crate::kimi_config::provider_models(&provider.settings_config);
-    let Some(model) = models.into_iter().find(|model| {
-        model.get("model").and_then(JsonValue::as_str) == Some(model_id)
-            || crate::kimi_config::model_alias(model) == Some(model_id)
-    }) else {
-        return;
-    };
-    let Some(levels) = model.get("support_efforts").and_then(JsonValue::as_array) else {
-        return;
-    };
-    let allowed = |effort: &str| levels.iter().any(|level| level.as_str() == Some(effort));
-    let explicit = inbound
-        .pointer("/output_config/effort")
-        .or_else(|| inbound.pointer("/reasoning/effort"))
-        .and_then(JsonValue::as_str)
-        .filter(|effort| allowed(effort));
-    let default = model
-        .get("default_effort")
-        .and_then(JsonValue::as_str)
-        .filter(|effort| allowed(effort));
-    let disabled = inbound
-        .pointer("/thinking/type")
-        .and_then(JsonValue::as_str)
-        == Some("disabled");
-    let effort = if disabled {
-        if allowed("none") {
-            Some("none")
-        } else {
-            levels.first().and_then(JsonValue::as_str)
-        }
-    } else {
-        explicit.or(default)
-    };
-    if let Some(effort) = effort {
-        if !outbound.get("reasoning").is_some_and(JsonValue::is_object) {
-            outbound["reasoning"] = serde_json::json!({});
-        }
-        outbound["reasoning"]["effort"] = JsonValue::String(effort.to_string());
     }
 }

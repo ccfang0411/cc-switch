@@ -803,7 +803,7 @@ mod tests {
         let db = Database::memory().unwrap();
         seed_pricing(&db, "k3")?;
 
-        let first = sync_kimicode_roots(&db, &[root.clone()]);
+        let first = sync_kimicode_roots(&db, std::slice::from_ref(&root));
         assert_eq!(first.imported, 2);
         let second = sync_kimicode_roots(&db, &[root]);
         assert_eq!(second.imported, 0);
@@ -834,7 +834,10 @@ mod tests {
             )],
         );
         let db = Database::memory().unwrap();
-        assert_eq!(sync_kimicode_roots(&db, &[root.clone()]).imported, 1);
+        assert_eq!(
+            sync_kimicode_roots(&db, std::slice::from_ref(&root)).imported,
+            1
+        );
 
         {
             let mut file = fs::OpenOptions::new().append(true).open(&wire).unwrap();
@@ -870,7 +873,10 @@ mod tests {
             &[usage_record("kimi-code/k3", "turn", 7_000_000)],
         );
         let db = Database::memory().unwrap();
-        assert_eq!(sync_kimicode_roots(&db, &[root.clone()]).imported, 1);
+        assert_eq!(
+            sync_kimicode_roots(&db, std::slice::from_ref(&root)).imported,
+            1
+        );
 
         {
             let conn = lock_conn!(db.conn);
