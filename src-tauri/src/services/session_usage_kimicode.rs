@@ -18,14 +18,15 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    estimated_latency_ms, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
-    SessionSyncResult,
+    estimated_first_token_ms, estimated_latency_ms, load_sync_cursors, metadata_modified_nanos,
+    update_sync_state_on_conn, SessionSyncResult,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -37,6 +38,8 @@ const MAX_WIRE_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_MODEL_LABEL_BYTES: usize = 512;
 const MIN_SQLITE_UNIX_SECONDS: i64 = -62_167_219_200;
 const MAX_SQLITE_UNIX_SECONDS: i64 = 253_402_300_799;
+/// Kimi 直连日志的计时口径：`step.begin` 起点 + `step.end` 原生首字/生成时长。
+const TIMING_PARSER_STATE: &str = "kimicode-timing-v2";
 
 #[derive(Debug)]
 struct WireFile {
@@ -56,6 +59,8 @@ struct KimiUsageRecord {
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
     latency_ms: i64,
+    first_token_ms: Option<i64>,
+    step_uuid: Option<String>,
     created_at: i64,
     session_id: String,
 }
@@ -241,10 +246,11 @@ fn sync_single_wire_file(
     let metadata = fs::metadata(&file.path)
         .map_err(|error| AppError::Config(format!("无法读取 Kimi Code 会话文件元数据: {error}")))?;
     let modified = metadata_modified_nanos(&metadata);
-    let last_modified = cursors
-        .get(&file_path)
-        .map_or(0, |cursor| cursor.last_modified);
-    if modified <= last_modified {
+    let cursor = cursors.get(&file_path);
+    let last_modified = cursor.map_or(0, |cursor| cursor.last_modified);
+    if modified <= last_modified
+        && cursor.and_then(|cursor| cursor.parser_state.as_deref()) == Some(TIMING_PARSER_STATE)
+    {
         return Ok(SessionSyncResult::default());
     }
     if metadata.len() > MAX_WIRE_BYTES {
@@ -285,6 +291,10 @@ fn sync_single_wire_file(
         }
         if complete && !insert_failed {
             update_sync_state_on_conn(&tx, &file_path, modified, content.lines().count() as i64)?;
+            tx.execute(
+                "UPDATE session_log_sync SET parser_state = ?2 WHERE file_path = ?1",
+                rusqlite::params![file_path, TIMING_PARSER_STATE],
+            )?;
         }
         tx.commit().map_err(|error| {
             AppError::Database(format!("提交 Kimi Code 用量导入事务失败: {error}"))
@@ -297,10 +307,20 @@ fn sync_single_wire_file(
     Ok(result)
 }
 
+struct StepTiming {
+    uuid: String,
+    start_ms: i64,
+    first_output_ms: Option<i64>,
+}
+
 fn parse_wire_usage(session_id: &str, agent: &str, content: &str) -> Vec<KimiUsageRecord> {
     let mut records = Vec::new();
     // (start_ms, model_alias, upstream_model) of the most recent llm.request
     let mut pending: Option<(i64, String, String)> = None;
+    // Direct-mode wires omit `llm.request`; the step events carry the timing instead.
+    let mut step: Option<StepTiming> = None;
+    // step uuid -> (native latency, native first token) from `step.end`.
+    let mut native_timing: HashMap<String, (i64, Option<i64>)> = HashMap::new();
 
     for line in content.lines() {
         let line = line.trim();
@@ -333,6 +353,62 @@ fn parse_wire_usage(session_id: &str, agent: &str, content: &str) -> Vec<KimiUsa
                     .to_string();
                 pending = Some((time, alias, model));
             }
+            "context.append_loop_event" => {
+                let event = &value["event"];
+                let Some(uuid) = event["uuid"].as_str().filter(|uuid| !uuid.is_empty()) else {
+                    continue;
+                };
+                match event["type"].as_str() {
+                    Some("step.begin") => {
+                        let Some(start_ms) = value.get("time").and_then(Value::as_i64) else {
+                            continue;
+                        };
+                        step = Some(StepTiming {
+                            uuid: uuid.to_string(),
+                            start_ms,
+                            first_output_ms: None,
+                        });
+                    }
+                    Some("content.part") => {
+                        let Some(current) = step.as_mut() else {
+                            continue;
+                        };
+                        if event["stepUuid"]
+                            .as_str()
+                            .is_some_and(|id| id != current.uuid)
+                        {
+                            continue;
+                        }
+                        if current.first_output_ms.is_none() {
+                            current.first_output_ms = value.get("time").and_then(Value::as_i64);
+                        }
+                    }
+                    Some("step.end")
+                        if step.as_ref().is_some_and(|current| current.uuid == uuid) =>
+                    {
+                        let first = event["llmFirstTokenLatencyMs"]
+                            .as_i64()
+                            .filter(|value| *value > 0);
+                        let stream = event["llmStreamDurationMs"]
+                            .as_i64()
+                            .filter(|value| *value > 0);
+                        if let (Some(first), Some(stream)) = (first, stream) {
+                            if let Some(latency) =
+                                estimated_latency_ms(0, first.saturating_add(stream))
+                            {
+                                native_timing
+                                    .insert(uuid.to_string(), (latency, Some(first.min(latency))));
+                            }
+                        }
+                        step = None;
+                    }
+                    _ => {}
+                }
+            }
+            "turn.ended" | "agent.turn.started" | "agent.switched" => {
+                pending = None;
+                step = None;
+            }
             "usage.record" => {
                 if value.get("usageScope").and_then(Value::as_str) == Some("session") {
                     continue;
@@ -356,19 +432,31 @@ fn parse_wire_usage(session_id: &str, agent: &str, content: &str) -> Vec<KimiUsa
                     continue;
                 }
 
-                let (model, latency_ms) = match pending.take() {
-                    Some((start_ms, pending_alias, pending_model))
-                        if pending_alias.is_empty() || pending_alias == alias =>
-                    {
-                        let model = nonempty_label(&pending_model)
+                let matched = pending.take().filter(|(_, pending_alias, _)| {
+                    pending_alias.is_empty() || pending_alias == alias
+                });
+                let step_start_ms = step.as_ref().map(|current| current.start_ms);
+                let first_output_ms = step.as_ref().and_then(|current| current.first_output_ms);
+                let (model, start_ms) = match matched {
+                    Some((start_ms, _, pending_model)) => (
+                        nonempty_label(&pending_model)
                             .or_else(|| model_from_alias(alias))
-                            .unwrap_or_else(|| UNKNOWN_MODEL.to_string());
-                        (model, estimated_latency_ms(start_ms, time_ms).unwrap_or(0))
-                    }
-                    _ => (
-                        model_from_alias(alias).unwrap_or_else(|| UNKNOWN_MODEL.to_string()),
-                        0,
+                            .unwrap_or_else(|| UNKNOWN_MODEL.to_string()),
+                        Some(start_ms),
                     ),
+                    None => (
+                        model_from_alias(alias).unwrap_or_else(|| UNKNOWN_MODEL.to_string()),
+                        step_start_ms,
+                    ),
+                };
+                let latency_ms = start_ms
+                    .and_then(|start| estimated_latency_ms(start, time_ms))
+                    .unwrap_or(0);
+                let first_token_ms = match (start_ms, first_output_ms) {
+                    (Some(start), Some(first_output)) if latency_ms > 0 => {
+                        estimated_first_token_ms(start, first_output, latency_ms)
+                    }
+                    _ => None,
                 };
 
                 let created_at =
@@ -383,11 +471,24 @@ fn parse_wire_usage(session_id: &str, agent: &str, content: &str) -> Vec<KimiUsa
                     cache_read_tokens: counters.cache_read,
                     cache_creation_tokens: counters.cache_creation,
                     latency_ms,
+                    first_token_ms,
+                    step_uuid: step.as_ref().map(|current| current.uuid.clone()),
                     created_at,
                     session_id: session_id.to_string(),
                 });
             }
             _ => {}
+        }
+    }
+
+    // `usage.record` precedes `step.end`; replace the estimates with the CLI's native
+    // first-token and stream durations when the completed step carries them.
+    for record in &mut records {
+        if let Some(uuid) = record.step_uuid.as_deref() {
+            if let Some((latency, first_token)) = native_timing.get(uuid) {
+                record.latency_ms = *latency;
+                record.first_token_ms = *first_token;
+            }
         }
     }
 
@@ -537,7 +638,37 @@ pub(crate) fn remember_in_ledger(
     .map_err(|error| AppError::Database(format!("写入 Kimi Code 用量去重账本失败: {error}")))
 }
 
+/// Backfill timing on rows imported by the parser that only knew `llm.request`.
+fn fill_missing_timing(
+    conn: &rusqlite::Connection,
+    record: &KimiUsageRecord,
+) -> Result<(), AppError> {
+    if record.latency_ms <= 0 && record.first_token_ms.is_none() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE proxy_request_logs
+         SET latency_ms = CASE WHEN ?2 > 0 AND latency_ms = 0 THEN ?2 ELSE latency_ms END,
+             first_token_ms = CASE
+                 WHEN first_token_ms IS NULL OR first_token_ms = 0 THEN ?3
+                 ELSE first_token_ms
+             END
+         WHERE request_id = ?1 AND data_source = ?4",
+        rusqlite::params![
+            record.request_id,
+            record.latency_ms,
+            record.first_token_ms,
+            DATA_SOURCE
+        ],
+    )
+    .map(|_| ())
+    .map_err(|error| AppError::Database(format!("更新 Kimi Code 会话用量耗时失败: {error}")))
+}
+
 fn insert_record(conn: &rusqlite::Connection, record: &KimiUsageRecord) -> Result<bool, AppError> {
+    // Rows imported before step timing existed still need the new estimate/native values;
+    // the ledger below would otherwise hide them on the rescan.
+    fill_missing_timing(conn, record)?;
     // The detail table is pruned after 30 days but this ledger is not. Without
     // it, re-reading an appended wire file would re-insert already-rolled-up
     // rows and inflate the daily totals.
@@ -622,7 +753,7 @@ fn insert_record(conn: &rusqlite::Connection, record: &KimiUsageRecord) -> Resul
                 cache_creation_cost.to_string(),
                 total_cost.to_string(),
                 record.latency_ms,
-                Option::<i64>::None,
+                record.first_token_ms,
                 200i64,
                 Option::<String>::None,
                 record.session_id,
@@ -1056,6 +1187,90 @@ mod tests {
         }
         assert!(after >= before);
         assert!(after > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_mode_step_timing_sets_latency_and_first_token() -> Result<(), AppError> {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let base = 1_800_000_000_000i64;
+        let alias = "cc-switch:vendor/deepseek-flash";
+        write_session(
+            &root,
+            "main",
+            &[
+                json!({"type":"context.append_loop_event","time":base,"agentId":"main","event":{"type":"step.begin","uuid":"a","turnId":"1","step":1}}).to_string(),
+                json!({"type":"context.append_loop_event","time":base+3_000,"agentId":"main","event":{"type":"content.part","uuid":"part-a","stepUuid":"a","part":{"type":"think","think":"a"}}}).to_string(),
+                usage_record(alias, "turn", base + 4_000),
+                json!({"type":"context.append_loop_event","time":base+4_100,"agentId":"main","event":{"type":"step.end","uuid":"a","messageId":"m-a","usage":{"inputOther":100,"output":20,"inputCacheRead":50,"inputCacheCreation":0},"llmFirstTokenLatencyMs":1200,"llmStreamDurationMs":2800}}).to_string(),
+                json!({"type":"context.append_loop_event","time":base+10_000,"agentId":"main","event":{"type":"step.begin","uuid":"b","turnId":"2","step":1}}).to_string(),
+                json!({"type":"context.append_loop_event","time":base+12_000,"agentId":"main","event":{"type":"content.part","uuid":"part-b","stepUuid":"b","part":{"type":"text","text":"b"}}}).to_string(),
+                usage_record(alias, "turn", base + 15_000),
+                json!({"type":"context.append_loop_event","time":base+15_100,"agentId":"main","event":{"type":"step.end","uuid":"b","messageId":"m-b"}}).to_string(),
+            ],
+        );
+        let db = Database::memory().unwrap();
+        seed_pricing(&db, "deepseek-flash")?;
+
+        let result = sync_kimicode_roots(&db, &[root]);
+        assert_eq!(result.imported, 2);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let conn = lock_conn!(db.conn);
+        let rows: Vec<(i64, Option<i64>)> = conn
+            .prepare(
+                "SELECT latency_ms, first_token_ms FROM proxy_request_logs
+                 WHERE data_source = ?1 ORDER BY created_at",
+            )?
+            .query_map([DATA_SOURCE], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // The first step uses the native step.end timing; the second falls back to
+        // step.begin -> usage.record and the first content part.
+        assert_eq!(rows, vec![(4_000, Some(1_200)), (5_000, Some(2_000))]);
+        Ok(())
+    }
+
+    #[test]
+    fn rescan_backfills_timing_for_rows_imported_without_it() -> Result<(), AppError> {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let base = 1_900_000_000_000i64;
+        write_session(
+            &root,
+            "main",
+            &[
+                json!({"type":"context.append_loop_event","time":base,"agentId":"main","event":{"type":"step.begin","uuid":"a","turnId":"1","step":1}}).to_string(),
+                json!({"type":"context.append_loop_event","time":base+3_000,"agentId":"main","event":{"type":"content.part","uuid":"part-a","stepUuid":"a","part":{"type":"think","think":"a"}}}).to_string(),
+                usage_record("cc-switch:vendor/deepseek-flash", "turn", base + 4_000),
+                json!({"type":"context.append_loop_event","time":base+4_100,"agentId":"main","event":{"type":"step.end","uuid":"a","messageId":"m-a","llmFirstTokenLatencyMs":1200,"llmStreamDurationMs":2800}}).to_string(),
+            ],
+        );
+        let db = Database::memory().unwrap();
+        seed_pricing(&db, "deepseek-flash")?;
+        assert_eq!(
+            sync_kimicode_roots(&db, std::slice::from_ref(&root)).imported,
+            1
+        );
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs SET latency_ms = 0, first_token_ms = NULL
+                 WHERE data_source = ?1",
+                [DATA_SOURCE],
+            )?;
+            conn.execute("UPDATE session_log_sync SET parser_state = NULL", [])?;
+        }
+
+        let second = sync_kimicode_roots(&db, std::slice::from_ref(&root));
+        assert_eq!(second.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let (latency, first): (i64, Option<i64>) = conn.query_row(
+            "SELECT latency_ms, first_token_ms FROM proxy_request_logs
+             WHERE data_source = ?1",
+            [DATA_SOURCE],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!((latency, first), (4_000, Some(1_200)));
         Ok(())
     }
 }
