@@ -34,6 +34,8 @@ import {
   useSettingsQuery,
 } from "@/lib/query";
 import { piApi, sessionsApi, type AppId } from "@/lib/api";
+import type { KimiResumeKind, KimiResumeTarget } from "@/lib/api/sessions";
+import { KimiResumeDialog } from "./KimiResumeDialog";
 import type { SessionMeta } from "@/types";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { Button } from "@/components/ui/button";
@@ -188,6 +190,10 @@ export function SessionManagerPage({
     null,
   );
   const [renameTarget, setRenameTarget] = useState<SessionMeta | null>(null);
+  const [kimiResume, setKimiResume] = useState<{
+    target: KimiResumeTarget;
+    kind: KimiResumeKind;
+  } | null>(null);
   const deleteSourceRef = useRef<DeleteSource>("row");
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const [whereOpen, setWhereOpen] = useState(false);
@@ -445,6 +451,14 @@ export function SessionManagerPage({
     (text: string, message: string) => void copyText(text, message),
     [copyText],
   );
+
+  const openKimiResume = (session: SessionMeta, kind: KimiResumeKind) => {
+    if (session.providerId !== "kimi" || !session.sourcePath) return;
+    setKimiResume({
+      target: { sessionId: session.sessionId, sourcePath: session.sourcePath },
+      kind,
+    });
+  };
 
   const handleLaunch = async (session: SessionMeta) => {
     const command = session.resumeCommand;
@@ -785,6 +799,11 @@ export function SessionManagerPage({
         onToggleChecked={(checked) => toggleSelected(session, checked)}
         onStartSelect={() => enterSelection(session)}
         onLaunch={() => void handleLaunch(session)}
+        onResumeWithModel={
+          session.providerId === "kimi" && session.sourcePath
+            ? () => openKimiResume(session, "original")
+            : undefined
+        }
         onCopyResume={() =>
           session.resumeCommand &&
           handleCopy(
@@ -1257,6 +1276,11 @@ export function SessionManagerPage({
             }
             onBack={backToList}
             onLaunch={() => void handleLaunch(readerSession)}
+            onKimiResume={
+              readerSession.providerId === "kimi" && readerSession.sourcePath
+                ? (kind) => openKimiResume(readerSession, kind)
+                : undefined
+            }
             onCopy={handleCopy}
             onOpenTerminalSettings={onOpenTerminalSettings ?? (() => undefined)}
             onReload={() => void reloadMessages()}
@@ -1666,6 +1690,14 @@ export function SessionManagerPage({
           if (!renameSessionMutation.isPending) setRenameTarget(null);
         }}
       />
+      {kimiResume && (
+        <KimiResumeDialog
+          target={kimiResume.target}
+          kind={kimiResume.kind}
+          terminal={terminalName}
+          onClose={() => setKimiResume(null)}
+        />
+      )}
       <SessionSourcesDialog
         open={whereOpen}
         onClose={() => setWhereOpen(false)}

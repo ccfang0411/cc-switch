@@ -8,6 +8,10 @@ use crate::session_manager;
 use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
+use crate::session_manager::providers::kimi::resume::{
+    self, ModelSelection, ResumeAction, ResumeError, ResumeKind, ResumeOptions, ResumeOutcome,
+    ResumeTarget,
+};
 
 #[cfg(test)]
 #[path = "session_manager_tests.rs"]
@@ -224,15 +228,7 @@ pub async fn launch_session_terminal(
     let cwd = cwd.clone();
     let custom_config = custom_config.clone();
 
-    // Read preferred terminal from global settings
-    let preferred = crate::settings::get_preferred_terminal();
-    // Map global setting terminal names to session terminal names
-    // Global uses "iterm2", session terminal uses "iterm"
-    let target = match preferred.as_deref() {
-        Some("iterm2") => "iterm".to_string(),
-        Some(t) => t.to_string(),
-        None => "terminal".to_string(), // Default to Terminal.app on macOS
-    };
+    let target = preferred_session_terminal();
 
     tauri::async_runtime::spawn_blocking(move || {
         session_manager::terminal::launch_terminal(
@@ -246,6 +242,38 @@ pub async fn launch_session_terminal(
     .map_err(|e| format!("Failed to launch terminal: {e}"))??;
 
     Ok(true)
+}
+
+fn preferred_session_terminal() -> String {
+    match crate::settings::get_preferred_terminal().as_deref() {
+        Some("iterm2") => "iterm".into(),
+        Some(terminal) => terminal.into(),
+        None => "terminal".into(),
+    }
+}
+
+#[tauri::command]
+pub async fn get_kimi_session_resume_options(
+    state: tauri::State<'_, crate::store::AppState>,
+    target: ResumeTarget,
+) -> Result<ResumeOptions, ResumeError> {
+    Ok(resume::prepare(state.inner(), target).await?.options)
+}
+
+#[tauri::command]
+pub async fn continue_kimi_session(
+    state: tauri::State<'_, crate::store::AppState>,
+    target: ResumeTarget,
+    selection: ModelSelection,
+    kind: ResumeKind,
+    action: ResumeAction,
+) -> Result<ResumeOutcome, ResumeError> {
+    let context = resume::prepare(state.inner(), target).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        context.execute(selection, kind, action, &preferred_session_terminal())
+    })
+    .await
+    .map_err(|_| ResumeError::Internal)?
 }
 
 #[tauri::command]

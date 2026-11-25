@@ -1820,6 +1820,8 @@ pub fn run() {
             commands::delete_sessions,
             commands::rename_session,
             commands::launch_session_terminal,
+            commands::get_kimi_session_resume_options,
+            commands::continue_kimi_session,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
             commands::prepare_tool_uninstall,

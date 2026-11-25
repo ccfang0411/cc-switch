@@ -79,6 +79,8 @@ export interface SessionReaderHeaderProps {
   onNext: () => void;
   onBack: () => void;
   onLaunch: () => void;
+  onResumeWithModel?: () => void;
+  onContinueContext?: () => void;
   onCopy: (text: string, message: string) => void;
   onCopyMarkdown: () => void;
   onExportMarkdown: () => void;
@@ -102,6 +104,8 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   onNext,
   onBack,
   onLaunch,
+  onResumeWithModel,
+  onContinueContext,
   onCopy,
   onCopyMarkdown,
   onExportMarkdown,
@@ -138,6 +142,14 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           }),
     );
 
+  const resumeWithModelItem = onResumeWithModel && (
+    <DropdownMenuItem
+      className={sessionMenuItemClass}
+      onSelect={onResumeWithModel}
+    >
+      {t("sessionManager.kimiResume.menu")}
+    </DropdownMenuItem>
+  );
   let resume: ReactNode;
   if (command && launchLabel) {
     resume = (
@@ -175,6 +187,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
               <Play className="h-3.5 w-3.5 text-fg-2" strokeWidth={1.5} />
               {launchLabel}
             </DropdownMenuItem>
+            {resumeWithModelItem}
             <DropdownMenuItem
               className={sessionMenuItemClass}
               title={command}
@@ -285,6 +298,15 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         align="end"
         className="w-[230px] rounded-panel p-1 shadow-v7-md"
       >
+        {(!command || !launchLabel) && resumeWithModelItem}
+        {onContinueContext && (
+          <DropdownMenuItem
+            className={sessionMenuItemClass}
+            onSelect={onContinueContext}
+          >
+            {t("sessionManager.kimiResume.contextMenu")}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           className={sessionMenuItemClass}
           disabled={!canCopyMarkdown}

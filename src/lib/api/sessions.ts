@@ -43,6 +43,33 @@ export interface BlockContentPage {
   limit?: number;
 }
 
+export type KimiResumeKind = "original" | "new";
+export type KimiResumeAction = "open" | "copy";
+export type KimiResumeMode = "direct" | "route" | "stack";
+
+export interface KimiResumeTarget {
+  sessionId: string;
+  sourcePath: string;
+}
+
+export interface KimiResumeModel {
+  alias: string;
+  model: string;
+  provider: string;
+  displayName?: string | null;
+  isDefault: boolean;
+  revision: string;
+}
+
+export interface KimiResumeOptions {
+  models: KimiResumeModel[];
+  mode: KimiResumeMode;
+}
+
+export type KimiResumeOutcome =
+  | { kind: "opened" }
+  | { kind: "command"; command: string };
+
 export const sessionsApi = {
   async list(): Promise<SessionMeta[]> {
     return await invoke("list_sessions");
@@ -155,6 +182,26 @@ export const sessionsApi = {
       sessionId,
       sourcePath,
       title,
+    });
+  },
+
+  async getKimiResumeOptions(
+    target: KimiResumeTarget,
+  ): Promise<KimiResumeOptions> {
+    return await invoke("get_kimi_session_resume_options", { target });
+  },
+
+  async continueKimiSession(
+    target: KimiResumeTarget,
+    selection: Pick<KimiResumeModel, "alias" | "revision">,
+    kind: KimiResumeKind,
+    action: KimiResumeAction,
+  ): Promise<KimiResumeOutcome> {
+    return await invoke("continue_kimi_session", {
+      target,
+      selection,
+      kind,
+      action,
     });
   },
 

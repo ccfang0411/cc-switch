@@ -80,6 +80,7 @@ interface SessionItemProps {
   onCopyResume: () => void;
   onCopyId: () => void;
   onCopySource: () => void;
+  onResumeWithModel?: () => void;
   onRename?: () => void;
   onDelete: () => void;
 }
@@ -103,6 +104,7 @@ export function SessionItem({
   onCopyResume,
   onCopyId,
   onCopySource,
+  onResumeWithModel,
   onRename,
   onDelete,
 }: SessionItemProps) {
@@ -380,6 +382,14 @@ export function SessionItem({
                     defaultValue: "复制源文件路径",
                   })}
                 </DropdownMenuItem>
+                {onResumeWithModel && (
+                  <DropdownMenuItem
+                    className={sessionMenuItemClass}
+                    onSelect={onResumeWithModel}
+                  >
+                    {t("sessionManager.kimiResume.menu")}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 {onRename && canRenameSession(session) && (
                   <DropdownMenuItem

@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "4.0.38-kimicode.20261123020629"
+version = "4.0.38-kimicode.20261123170806"
 dependencies = [
  "aho-corasick",
  "anyhow",

@@ -7,6 +7,8 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18n from "i18next";
+import zh from "@/i18n/locales/zh.json";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
 import { UNKNOWN_PROJECT_DIR_KEY } from "@/components/sessions/utils";
@@ -82,6 +84,47 @@ const openAppMenu = async () =>
 
 const EXPANDED_KEY = "cc-switch.sessionManager.expandedProjects";
 
+const kimiTarget = {
+  sessionId: "kimi-session-1",
+  sourcePath: "/mock/kimi/session-1/agents/main/wire.jsonl",
+};
+const kimiModels = [
+  {
+    alias: "default",
+    model: "default-model",
+    provider: "Default provider",
+    isDefault: true,
+    revision: "default-rev",
+  },
+  {
+    alias: "configured/new-alias",
+    model: "replacement",
+    provider: "Replacement provider",
+    isDefault: false,
+    revision: "replacement-rev",
+  },
+];
+const setupKimiResumeFixture = () => {
+  setSettings({
+    preferredTerminal: "iterm2",
+    visibleApps: { ...DEFAULT_VISIBLE_APPS, kimi: true },
+  });
+  window.localStorage.setItem(EXPANDED_KEY, JSON.stringify(["/mock/kimi"]));
+  setSessionFixtures(
+    [
+      {
+        ...kimiTarget,
+        providerId: "kimi",
+        title: "Kimi 历史会话",
+        projectDir: "/mock/kimi",
+        createdAt: Date.now() - HOUR,
+        resumeCommand: "kimi --session kimi-session-1",
+      },
+    ],
+    {},
+  );
+};
+
 const setupZetaSession = (word = "zeta") => {
   const source = "/mock/codex/needle.jsonl";
   setSessionFixtures(
@@ -154,6 +197,9 @@ const setupZetaSession = (word = "zeta") => {
 
 describe("SessionManagerPage", () => {
   beforeEach(() => {
+    i18n.addResourceBundle("zh", "translation", {
+      sessionManager: { kimiResume: zh.sessionManager.kimiResume },
+    });
     // 固定在本地时间的中午：会话时间都是「现在往前几小时」，凌晨跑时会跨到昨天，
     // 「按时间」分组就不稳定。只假 Date 且照常走时，计时器保持真实。
     vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
@@ -256,6 +302,7 @@ describe("SessionManagerPage", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -806,6 +853,132 @@ describe("SessionManagerPage", () => {
         "codex resume codex-session-1",
       ),
     );
+  });
+
+  it("opens Kimi model choices from the list but does not launch on cancel", async () => {
+    setupKimiResumeFixture();
+    const options = vi
+      .spyOn(sessionsApi, "getKimiResumeOptions")
+      .mockResolvedValue({ mode: "direct", models: kimiModels });
+    const start = vi.spyOn(sessionsApi, "continueKimiSession");
+    renderPage("kimi");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Kimi 历史会话 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "换模型继续…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "换模型继续原会话",
+    });
+    expect(
+      await within(dialog).findByRole("combobox", {
+        name: "已配置模型（直连）",
+      }),
+    ).toHaveValue("default");
+    expect(options).toHaveBeenCalledWith(kimiTarget);
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(start).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    options.mockRestore();
+    start.mockRestore();
+  });
+
+  it("opens the original Kimi session with the confirmed replacement from its reader", async () => {
+    platform.mac = true;
+    setupKimiResumeFixture();
+    const options = vi
+      .spyOn(sessionsApi, "getKimiResumeOptions")
+      .mockResolvedValue({ mode: "stack", models: kimiModels });
+    const start = vi
+      .spyOn(sessionsApi, "continueKimiSession")
+      .mockResolvedValue({ kind: "opened" });
+    renderPage("kimi");
+    await screen.findByText("Kimi 历史会话");
+    openRow("Kimi 历史会话");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "更多恢复方式" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "换模型继续…" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(
+      await within(dialog).findByRole("combobox", {
+        name: "已配置模型（聚合）",
+      }),
+      {
+        target: { value: "configured/new-alias" },
+      },
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: /中打开$/ }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith(
+        kimiTarget,
+        { alias: "configured/new-alias", revision: "replacement-rev" },
+        "original",
+        "open",
+      ),
+    );
+    await waitFor(() =>
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "已打开终端，恢复结果请查看 Kimi Code",
+      ),
+    );
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    options.mockRestore();
+    start.mockRestore();
+  });
+
+  it("requires reselection for a changed model and only copies commands off macOS", async () => {
+    setupKimiResumeFixture();
+    const options = vi
+      .spyOn(sessionsApi, "getKimiResumeOptions")
+      .mockResolvedValue({ mode: "route", models: kimiModels });
+    const command =
+      "cd '/mock/kimi' && kimi --session kimi-session-1 --model=configured/new-alias";
+    const start = vi
+      .spyOn(sessionsApi, "continueKimiSession")
+      .mockRejectedValueOnce("modelChanged")
+      .mockResolvedValueOnce({ kind: "command", command });
+    renderPage("kimi");
+    await screen.findByText("Kimi 历史会话");
+    openRow("Kimi 历史会话");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Kimi 历史会话 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "换模型继续…" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    const select = () =>
+      within(dialog).findByRole("combobox", { name: "已配置模型（路由）" });
+    await select();
+    const copy = within(dialog).getByRole("button", { name: "复制命令" });
+    expect(
+      within(dialog).queryByRole("button", { name: /中打开$/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(copy);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "模型或路由已变更",
+    );
+    expect(copy).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "重新读取" }));
+    fireEvent.change(await select(), {
+      target: { value: "configured/new-alias" },
+    });
+    fireEvent.click(copy);
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(command),
+    );
+    expect(start).toHaveBeenLastCalledWith(
+      kimiTarget,
+      { alias: "configured/new-alias", revision: "replacement-rev" },
+      "original",
+      "copy",
+    );
+    options.mockRestore();
+    start.mockRestore();
   });
 
   it("deletes the open session after confirming and returns to the list", async () => {

@@ -303,6 +303,14 @@ fn state_lock() -> &'static Mutex<()> {
 /// 读状态文件。不存在时是空状态；内容坏了就挪到一旁（`live-state.json.corrupt-<时间>`）
 /// 从空状态开始：这是 CC Switch 自己的文件，里面只有未完成操作的意图。
 pub fn load(store: &DeviceStore) -> Result<LiveState, AppError> {
+    load_with_recovery(store, true)
+}
+
+pub(crate) fn load_read_only(store: &DeviceStore) -> Result<LiveState, AppError> {
+    load_with_recovery(store, false)
+}
+
+fn load_with_recovery(store: &DeviceStore, recover: bool) -> Result<LiveState, AppError> {
     let path = store.state_path();
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -323,6 +331,7 @@ pub fn load(store: &DeviceStore) -> Result<LiveState, AppError> {
             }
             Ok(state)
         }
+        Err(source) if !recover => Err(AppError::json(&path, source)),
         Err(err) => {
             let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
             let aside = path.with_file_name(format!("live-state.json.corrupt-{stamp}"));

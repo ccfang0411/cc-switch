@@ -20,15 +20,18 @@ import {
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
+import type { KimiResumeKind } from "@/lib/api/sessions";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { getBaseName } from "../utils";
+import { KimiContinuationDialog } from "../KimiResumeDialog";
 import { getAgentReaderStyle } from "./agentStyles";
 import { ReaderContext, type ReaderContextValue } from "./context";
 import { transcriptToMarkdown, turnToMarkdown } from "./exportMarkdown";
 import { useReaderT } from "./i18n";
+import { buildKimiContinuationContext } from "./kimiContinuation";
 import { SessionEventRow, SessionInjectedRow } from "./SessionEventRow";
 import {
   SessionAgentAvatar,
@@ -154,6 +157,7 @@ export interface SessionReaderProps {
   onNext: () => void;
   onBack: () => void;
   onLaunch: () => void;
+  onKimiResume?: (kind: KimiResumeKind) => void;
   onCopy: (text: string, message: string) => void;
   onOpenTerminalSettings: () => void;
   onReload: () => void;
@@ -178,6 +182,7 @@ export function SessionReader({
   onNext,
   onBack,
   onLaunch,
+  onKimiResume,
   onCopy,
   onOpenTerminalSettings,
   onReload,
@@ -198,6 +203,7 @@ export function SessionReader({
   const [expandAll, setExpandAll] = useState(readExpandAll);
   const [showInjected, setShowInjected] = useState(false);
   const [includeThinking, setIncludeThinking] = useState(false);
+  const [continuation, setContinuation] = useState<string | null>(null);
   const [turnOverrides, setTurnOverrides] = useState(EMPTY_OVERRIDES);
   const [stepOverrides, setStepOverrides] = useState(EMPTY_OVERRIDES);
   const [findOpen, setFindOpen] = useState(Boolean(initialFind));
@@ -475,6 +481,26 @@ export function SessionReader({
       toast.error(rt("exportFailed", { error: extractErrorMessage(error) }));
     }
   }, [exportOptions, rt, session.sessionId, title, turns]);
+
+  const showContinuation = () => {
+    setContinuation(
+      buildKimiContinuationContext(turns, {
+        intro: t("sessionManager.kimiResume.contextIntro"),
+        question: t("sessionManager.kimiResume.contextQuestion"),
+        answer: t("sessionManager.kimiResume.contextAnswer"),
+        truncated: t("sessionManager.kimiResume.contextTruncated"),
+      }),
+    );
+  };
+  const canContinueFromContext =
+    session.providerId === "kimi" &&
+    !failed &&
+    !transcript.isLoading &&
+    !transcript.isStreaming &&
+    messages === transcript.messages &&
+    turns.some((turn) =>
+      Boolean(turn.question?.text.trim() || turn.final?.text.trim()),
+    );
 
   const openFind = () => {
     setFindOpen(true);
@@ -792,6 +818,12 @@ export function SessionReader({
           onNext={onNext}
           onBack={onBack}
           onLaunch={onLaunch}
+          onResumeWithModel={
+            onKimiResume ? () => onKimiResume("original") : undefined
+          }
+          onContinueContext={
+            canContinueFromContext ? showContinuation : undefined
+          }
           onCopy={onCopy}
           onCopyMarkdown={copyMarkdown}
           onExportMarkdown={exportMarkdownFile}
@@ -862,6 +894,21 @@ export function SessionReader({
           )}
         </div>
       </div>
+      {continuation && (
+        <KimiContinuationDialog
+          context={continuation}
+          onCopy={onCopy}
+          onClose={() => setContinuation(null)}
+          onNewSession={
+            onKimiResume
+              ? () => {
+                  setContinuation(null);
+                  onKimiResume("new");
+                }
+              : undefined
+          }
+        />
+      )}
     </ReaderContext.Provider>
   );
 }

@@ -9,6 +9,8 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18n from "i18next";
+import zh from "@/i18n/locales/zh.json";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildInputDiff } from "@/components/sessions/reader/SessionDiff";
@@ -66,6 +68,7 @@ const onCopy = vi.fn();
 const renderReader = (
   providerId: string,
   messages: SessionMessage[],
+  onKimiResume?: React.ComponentProps<typeof SessionReader>["onKimiResume"],
 ): ReturnType<typeof render> => {
   const client = createTestQueryClient();
   const ui: ReactElement = (
@@ -82,6 +85,7 @@ const renderReader = (
         onNext={vi.fn()}
         onBack={vi.fn()}
         onLaunch={vi.fn()}
+        onKimiResume={onKimiResume}
         onCopy={onCopy}
         onOpenTerminalSettings={vi.fn()}
         onReload={vi.fn()}
@@ -100,7 +104,118 @@ const conversation = () => screen.getByRole("region", { name: "对话内容" });
 const stepButton = (name: RegExp) => screen.getByRole("button", { name });
 
 describe("SessionReader", () => {
+  it("preserves only visible conversation text in a Kimi continuation, without launching or sending it", async () => {
+    const open = vi.fn();
+    renderReader(
+      "kimi",
+      [
+        msg("system", [text("system instructions")], { injected: true }),
+        msg("user", [text("旧问题")], { turnId: "one" }),
+        msg(
+          "assistant",
+          [{ type: "thinking", text: "private thinking" }, call("x")],
+          { turnId: "one" },
+        ),
+        msg(
+          "tool",
+          [result("x", "success", { preview: "private tool result" })],
+          { turnId: "one" },
+        ),
+        msg("assistant", [text("旧回复")], { turnId: "one" }),
+        msg("user", [text("injected context")], {
+          injected: true,
+          turnId: "one",
+        }),
+        msg(
+          "user",
+          [
+            text("最新未完成的提问"),
+            {
+              type: "image",
+              image: {
+                source: { kind: "local_file", path: "/private/attachment.png" },
+                mediaType: "image/png",
+                size: 10,
+                alt: "private attachment",
+              },
+            },
+          ],
+          { turnId: "two" },
+        ),
+      ],
+      open,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "kimi 会话 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "复制接续上下文…" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "用最近对话接续",
+    });
+    const value = (within(dialog).getByRole("textbox") as HTMLTextAreaElement)
+      .value;
+    expect(value).toContain("旧问题");
+    expect(value).toContain("旧回复");
+    expect(value).toContain("最新未完成的提问");
+    expect(value).not.toMatch(
+      /system instructions|injected context|private thinking|private tool result|private attachment|cmd x/,
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(onCopy).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "复制上下文" }));
+    expect(onCopy).toHaveBeenCalledWith(value, "已复制接续上下文");
+    expect(open).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "选择模型新开会话…" }),
+    );
+    expect(open).toHaveBeenCalledWith("new");
+  });
+
+  it("caps Kimi continuation at six recent turns and twelve thousand characters", async () => {
+    const turns = Array.from({ length: 8 }, (_, index) => [
+      msg("user", [text(`fixture question ${index} end`)], {
+        turnId: `t${index}`,
+      }),
+      msg("assistant", [text(`fixture answer ${index} end`)], {
+        turnId: `t${index}`,
+      }),
+    ]).flat();
+    const view = renderReader("kimi", turns);
+    const readContext = async () => {
+      await userEvent.click(
+        screen.getByRole("button", { name: "kimi 会话 的更多操作" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "复制接续上下文…" }),
+      );
+      return (
+        within(await screen.findByRole("dialog")).getByRole(
+          "textbox",
+        ) as HTMLTextAreaElement
+      ).value;
+    };
+    const sixTurns = await readContext();
+    expect(sixTurns).not.toContain("fixture question 1 end");
+    expect(sixTurns).toContain("fixture question 2 end");
+    expect(sixTurns).toContain("fixture answer 7 end");
+    expect(sixTurns).toContain("更早的对话或超长内容已省略");
+    view.unmount();
+    renderReader("kimi", [
+      msg("user", [text("最新的超长问题 " + "🙂".repeat(13_000))]),
+    ]);
+    const capped = await readContext();
+    expect(capped.length).toBeLessThanOrEqual(12_000);
+    expect(capped).toContain("最新的超长问题");
+    expect(capped).toContain("更早的对话或超长内容已省略");
+    expect(capped).not.toMatch(/[\uD800-\uDFFF]/u);
+  });
+
   beforeEach(() => {
+    i18n.addResourceBundle("zh", "translation", {
+      sessionManager: { kimiResume: zh.sessionManager.kimiResume },
+    });
     onCopy.mockReset();
     window.localStorage.clear();
     clearSessionImageCache();
